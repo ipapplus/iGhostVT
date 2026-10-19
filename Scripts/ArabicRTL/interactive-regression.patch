@@ -1,0 +1,52 @@
+diff --git a/src/font/shaper/coretext.zig b/src/font/shaper/coretext.zig
+index 6a4f1a8..11d9450 100644
+--- a/src/font/shaper/coretext.zig
++++ b/src/font/shaper/coretext.zig
+@@ -3679,3 +3679,47 @@ test "shape mixed Arabic Latin color spans map to logical source cells" {
+         run = try it.next(alloc);
+     }
+ }
++
++
++test "shape mixed Arabic cursor and selection boundaries preserve logical protocol state" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    var testdata = try testShaperWithFont(alloc, .arabic);
++    defer testdata.deinit();
++    var t = try terminal.Terminal.init(testing.io, alloc, .{ .cols = 60, .rows = 3 });
++    defer t.deinit(alloc);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    stream.nextSlice("مرحبا Codex كيف حالك");
++    var state: terminal.RenderState = .empty;
++    defer state.deinit(alloc);
++    for ([_]usize{ 0, 2, 7, 12 }) |column| {
++        var command: [32]u8 = undefined;
++        stream.nextSlice(try std.fmt.bufPrint(&command, "\x1b[{d}G", .{column + 1}));
++        const before_x = t.screens.active.cursor.x;
++        const before_y = t.screens.active.cursor.y;
++        try testing.expectEqual(@as(usize, before_x), column);
++        const before = try t.screens.active.dumpStringAlloc(alloc, .{ .active = .{} });
++        defer alloc.free(before);
++        try state.update(alloc, &t);
++        var it = testdata.shaper.runIterator(.{
++            .grid = testdata.grid,
++            .cells = state.row_data.get(0).cells.slice(),
++            .cursor_x = column,
++            .selection = .{ 1, 4 },
++        });
++        while (try it.next(alloc)) |run| {
++            const cells = try testdata.shaper.shape(run);
++            for (cells) |cell| {
++                try testing.expect(cell.x < run.cells);
++                try testing.expect(@as(u32, run.offset) + cell.x < 60);
++                try testing.expect(run.logicalCellIndex(run.offset + cell.x) < 60);
++            }
++        }
++        try testing.expectEqual(before_x, t.screens.active.cursor.x);
++        try testing.expectEqual(before_y, t.screens.active.cursor.y);
++        const after = try t.screens.active.dumpStringAlloc(alloc, .{ .active = .{} });
++        defer alloc.free(after);
++        try testing.expectEqualStrings(before, after);
++    }
++}

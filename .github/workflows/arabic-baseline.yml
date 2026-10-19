@@ -114,6 +114,8 @@ jobs:
           zig build test --summary all -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false '-Dtest-filter=shape Arabic phrase contextual glyphs in visual cell order' 2>&1 | tee ../evidence/arabic-coretext-regression.log
       - name: Test the pinned Arabic RTL port with wrapper patches
         if: inputs.mode == 'rtl-shapers' || inputs.mode == 'rtl-package'
+        env:
+          ARABIC_DIAGNOSTIC_MODE: ${{ inputs.mode }}
         working-directory: wrapper
         shell: bash
         run: |
@@ -121,6 +123,10 @@ jobs:
           zig version | tee ../evidence/zig-version.log
           git -C "$GITHUB_WORKSPACE/engine" apply --check "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/engine-port.patch"
           git -C "$GITHUB_WORKSPACE/engine" apply "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/engine-port.patch"
+          if [[ "$ARABIC_DIAGNOSTIC_MODE" == "rtl-shapers" ]]; then
+            git -C "$GITHUB_WORKSPACE/engine" apply --check "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/interactive-regression.patch"
+            git -C "$GITHUB_WORKSPACE/engine" apply "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/interactive-regression.patch"
+          fi
           ./Script/apply-patches.sh "$GITHUB_WORKSPACE/engine" 2>&1 | tee ../evidence/wrapper-patches.log
           cd "$GITHUB_WORKSPACE/engine"
           zig fmt src/font/shaper src/renderer/generic.zig src/main_c.zig src/build/GhosttyZig.zig src/build/SharedDeps.zig src/build/uucode_config.zig pkg/itijah
