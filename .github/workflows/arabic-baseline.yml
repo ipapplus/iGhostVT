@@ -57,6 +57,15 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+      - uses: actions/cache/restore@v4
+        id: zig-cache
+        if: inputs.mode == 'rtl-shapers' || inputs.mode == 'rtl-package'
+        with:
+          path: |
+            .zig-cache
+            engine/zig-pkg
+          key: arabic-rtl-zig016-${{ runner.os }}-${{ runner.arch }}-dfe0cb0-${{ hashFiles('integration/Scripts/ArabicRTL/engine-port.patch') }}
+          restore-keys: arabic-rtl-zig016-${{ runner.os }}-${{ runner.arch }}-dfe0cb0-
       - name: Project checks and isolated host harnesses
         if: inputs.mode == 'baseline'
         working-directory: app
@@ -126,6 +135,14 @@ jobs:
           path: deliverables/
           if-no-files-found: error
           retention-days: 30
+      - uses: actions/cache/save@v4
+        if: always() && steps.zig-cache.outputs.cache-hit != 'true' && steps.zig-cache.outputs.cache-primary-key != ''
+        continue-on-error: true
+        with:
+          path: |
+            .zig-cache
+            engine/zig-pkg
+          key: ${{ steps.zig-cache.outputs.cache-primary-key }}
       - name: Preserve diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4
