@@ -21,8 +21,21 @@ PYLOCK
 
 python3 "$control/fetch-conformance-data.py" "$engine/pkg/itijah/testdata" | tee "$evidence/unicode-fixtures.json"
 cd "$engine"
+for backend in coretext coretext_harfbuzz; do
+    zig build test --summary all -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dfont-backend="$backend" '-Dtest-filter=run iterator' 2>&1 | tee "$evidence/rtl-${backend}-run-iterator.log"
+done
 zig build test --summary all -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dfont-backend=coretext_harfbuzz -Dtest-filter=shape 2>&1 | tee "$evidence/rtl-harfbuzz-shapers.log"
 zig build test --summary all -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dfont-backend=coretext -Dtest-filter=conformance -Dbidi-conformance-data=true -Doptimize=ReleaseSafe 2>&1 | tee "$evidence/bidi-conformance.log"
+
+python3 - "$evidence/bidi-conformance.log" <<'PYCONFORMANCE'
+from pathlib import Path
+import re, sys
+text = Path(sys.argv[1]).read_text()
+for name in ["BidiTest", "BidiCharacterTest"]:
+    matches = re.findall(re.escape(name) + r" \(full\): total=(\d+) executed=(\d+) passed=(\d+) failed=(\d+) skipped=(\d+)", text)
+    assert matches, "Official conformance harness did not report results: " + name
+    assert any(int(executed) > 0 and int(passed) > 0 and int(failed) == 0 for total, executed, passed, failed, skipped in matches), name
+PYCONFORMANCE
 
 export ZIG_BUILD_EXTRA_ARGS="-Dfont-backend=coretext"
 cd "$wrapper"

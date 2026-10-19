@@ -51,10 +51,10 @@ index 0000000..2a101fe
 +SOFTWARE.
 diff --git a/pkg/itijah/PORT.md b/pkg/itijah/PORT.md
 new file mode 100644
-index 0000000..50cfdca
+index 0000000..7fb056c
 --- /dev/null
 +++ b/pkg/itijah/PORT.md
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,30 @@
 +# Embedded itijah provenance
 +
 +Source: DiaaEddin/itijah tag v0.2.1, fetched as
@@ -82,6 +82,9 @@ index 0000000..50cfdca
 +
 +Array-list initialization uses Zig 0.16 `.empty` instead of the upstream
 +0.15 defaults and empty struct literals.
++
++Ghostty root-level tests call both official conformance harnesses explicitly;
++Zig 0.16 does not automatically register tests from dependency modules.
 diff --git a/pkg/itijah/README.md b/pkg/itijah/README.md
 new file mode 100644
 index 0000000..dccd5b5
@@ -4701,10 +4704,10 @@ index 0000000..6d355cd
 +}
 diff --git a/pkg/itijah/src/lib.zig b/pkg/itijah/src/lib.zig
 new file mode 100644
-index 0000000..4939712
+index 0000000..1ff333a
 --- /dev/null
 +++ b/pkg/itijah/src/lib.zig
-@@ -0,0 +1,472 @@
+@@ -0,0 +1,479 @@
 +//! itijah (اتجاه) — Zig-native Unicode Bidirectional Algorithm (UAX #9)
 +//!
 +//! Codepoint-based API inspired by FriBidi's design, implemented idiomatically in Zig.
@@ -4721,6 +4724,13 @@ index 0000000..4939712
 +// Data modules
 +pub const unicode = @import("data/unicode.zig");
 +pub const mirroring = @import("data/mirroring.zig");
++
++// Integration tests must call these explicitly: dependency-module test
++// declarations are not registered by the embedding module's test runner.
++pub const unicode_conformance = if (@import("builtin").is_test)
++    @import("test/conformance.zig")
++else
++    void;
 +
 +// Shaping modules (Phase 2 stubs)
 +pub const joining = @import("shaping/joining.zig");
@@ -5218,10 +5228,10 @@ index 0000000..3d7fc7b
 +}
 diff --git a/pkg/itijah/src/test/conformance.zig b/pkg/itijah/src/test/conformance.zig
 new file mode 100644
-index 0000000..230dbec
+index 0000000..ebc3668
 --- /dev/null
 +++ b/pkg/itijah/src/test/conformance.zig
-@@ -0,0 +1,452 @@
+@@ -0,0 +1,461 @@
 +const std = @import("std");
 +const testing = std.testing;
 +
@@ -5647,7 +5657,7 @@ index 0000000..230dbec
 +    return stats;
 +}
 +
-+test "BidiTest.txt conformance harness" {
++pub fn assertBidiTestConformance() !void {
 +    const mode = selectedMode();
 +
 +    const stats = try runBidiTest(testing.allocator, mode);
@@ -5661,7 +5671,7 @@ index 0000000..230dbec
 +    try testing.expectEqual(@as(usize, 0), stats.failed);
 +}
 +
-+test "BidiCharacterTest.txt conformance harness" {
++pub fn assertBidiCharacterTestConformance() !void {
 +    const mode = selectedMode();
 +
 +    const stats = try runBidiCharacterTest(testing.allocator, mode);
@@ -5673,6 +5683,15 @@ index 0000000..230dbec
 +    try testing.expect(stats.executed > 0);
 +    try testing.expect(stats.passed > 0);
 +    try testing.expectEqual(@as(usize, 0), stats.failed);
++}
++
++
++test "BidiTest.txt conformance harness" {
++    try assertBidiTestConformance();
++}
++
++test "BidiCharacterTest.txt conformance harness" {
++    try assertBidiCharacterTestConformance();
 +}
 diff --git a/pkg/itijah/src/test/diff_oracle.zig b/pkg/itijah/src/test/diff_oracle.zig
 new file mode 100644
@@ -6713,6 +6732,21 @@ index 0000000..7a29ec8
 +    try testing.expect(true);
 +    std.log.info("reference parity is external; no direct module dependency", .{});
 +}
+diff --git a/src/arabic_bidi_conformance.zig b/src/arabic_bidi_conformance.zig
+new file mode 100644
+index 0000000..bb2138e
+--- /dev/null
++++ b/src/arabic_bidi_conformance.zig
+@@ -0,0 +1,9 @@
++const itijah = @import("itijah");
++
++test "Unicode 16 BidiTest full conformance" {
++    try itijah.unicode_conformance.assertBidiTestConformance();
++}
++
++test "Unicode 16 BidiCharacterTest full conformance" {
++    try itijah.unicode_conformance.assertBidiCharacterTestConformance();
++}
 diff --git a/src/build/GhosttyZig.zig b/src/build/GhosttyZig.zig
 index 46ab05d..0744ed5 100644
 --- a/src/build/GhosttyZig.zig
@@ -6834,7 +6868,7 @@ index 0000000..de8cbf8
 +    };
 +}
 diff --git a/src/font/shaper/coretext.zig b/src/font/shaper/coretext.zig
-index 6960c32..52151ac 100644
+index 6960c32..6a4f1a8 100644
 --- a/src/font/shaper/coretext.zig
 +++ b/src/font/shaper/coretext.zig
 @@ -3,6 +3,8 @@ const builtin = @import("builtin");
@@ -7016,20 +7050,29 @@ index 6960c32..52151ac 100644
  
          // For debugging positions, turn this on:
          //var run_offset_y: f64 = 0.0;
-@@ -413,6 +439,25 @@ pub const Shaper = struct {
+@@ -413,6 +439,36 @@ pub const Shaper = struct {
          // other so we can iterate over them and just append to our
          // cell buffer.
          const runs = line.getGlyphRuns();
++        const rtl_marks = try alloc.alloc(bool, if (run.rtl) line.getGlyphCount() else 0);
 +        if (run.rtl) {
++            const shaping_font = attr_dict.getValue(macos.text.Font, macos.text.StringAttribute.font.key()).?;
++            var base_glyph_i: usize = 0;
 +            // CoreText may emit a mark before its base. Establish base
 +            // positions first so such marks retain their real GPOS offsets.
 +            for (0..runs.getCount()) |run_i| {
 +                const base_run = runs.getValueAtIndex(macos.text.Run, run_i);
-+                const advances = base_run.getAdvancesPtr() orelse try base_run.getAdvances(alloc);
++                const glyphs = base_run.getGlyphsPtr() orelse try base_run.getGlyphs(alloc);
++                const advances = try alloc.alloc(macos.graphics.Size, glyphs.len);
++                _ = shaping_font.getAdvancesForGlyphs(.horizontal, glyphs, advances);
 +                const positions = base_run.getPositionsPtr() orelse try base_run.getPositions(alloc);
 +                const indices = base_run.getStringIndicesPtr() orelse try base_run.getStringIndices(alloc);
 +                for (advances, positions, indices) |advance, position, index| {
-+                    if (advance.width == 0) continue;
++                    rtl_marks[base_glyph_i] = advance.width == 0;
++                    base_glyph_i += 1;
++                    const cp = state.codepoints.items[index].codepoint;
++                    if (advance.width == 0 or (cp != 0 and
++                        unicode.table.get(@intCast(cp)).width_zero_in_grapheme)) continue;
 +                    const cluster: usize = @intCast(state.codepoints.items[index].cluster);
 +                    if (cluster < self.cluster_anchor_x.items.len and
 +                        std.math.isNan(self.cluster_anchor_x.items[cluster]))
@@ -7038,11 +7081,13 @@ index 6960c32..52151ac 100644
 +                    }
 +                }
 +            }
++            assert(base_glyph_i == rtl_marks.len);
 +        }
++        var shaped_glyph_i: usize = 0;
          for (0..runs.getCount()) |run_i| {
              const ctrun = runs.getValueAtIndex(macos.text.Run, run_i);
  
-@@ -434,9 +479,15 @@ pub const Shaper = struct {
+@@ -434,9 +490,17 @@ pub const Shaper = struct {
                  positions,
                  indices,
              ) |glyph, advance, position, index| {
@@ -7052,15 +7097,17 @@ index 6960c32..52151ac 100644
 +                // CoreText can report RTL glyphs in visual order with absolute
 +                // glyph positions, so the current cluster does not always move
 +                // left-to-right through the terminal row.
++                const nominal_mark = run.rtl and rtl_marks[shaped_glyph_i];
++                shaped_glyph_i += 1;
                  const cluster = state.codepoints.items[index].cluster;
 +                const source_codepoint = state.codepoints.items[index].codepoint;
 +                const is_combining_mark = source_codepoint != 0 and
 +                    (unicode.table.get(@intCast(source_codepoint)).width_zero_in_grapheme or
-+                    (run.rtl and advance.width == 0));
++                    nominal_mark);
                  if (cell_offset.cluster != cluster) {
                      // We previously asserted that the new cluster is greater
                      // than cell_offset.cluster, but this isn't always true.
-@@ -486,16 +537,92 @@ pub const Shaper = struct {
+@@ -486,16 +550,92 @@ pub const Shaper = struct {
                      // exceptions to this heuristic for detecting ligatures,
                      // but using the logging below seems to show it works
                      // well.)
@@ -7162,7 +7209,7 @@ index 6960c32..52151ac 100644
                      }
                  }
  
-@@ -521,12 +648,10 @@ pub const Shaper = struct {
+@@ -521,12 +661,10 @@ pub const Shaper = struct {
              }
          }
  
@@ -7179,7 +7226,7 @@ index 6960c32..52151ac 100644
              @branchHint(.cold);
              std.mem.sort(
                  font.shape.Cell,
-@@ -685,6 +810,10 @@ pub const Shaper = struct {
+@@ -685,6 +823,10 @@ pub const Shaper = struct {
          pub fn finalize(self: RunIteratorHook) void {
              _ = self;
          }
@@ -7190,7 +7237,7 @@ index 6960c32..52151ac 100644
      };
  
      fn debugPositions(
-@@ -1823,13 +1952,8 @@ test "shape Chakma vowel sign with ligature (vowel sign renders first)" {
+@@ -1823,13 +1965,8 @@ test "shape Chakma vowel sign with ligature (vowel sign renders first)" {
          const cells = try shaper.shape(run);
          try testing.expectEqual(@as(usize, 4), cells.len);
          try testing.expectEqual(@as(u16, 0), cells[0].x);
@@ -7206,7 +7253,7 @@ index 6960c32..52151ac 100644
  
          // The vowel sign U renders before the TAA:
          try testing.expect(cells[1].x_offset < cells[2].x_offset);
-@@ -1893,18 +2017,18 @@ test "shape Bengali ligatures with out of order vowels" {
+@@ -1893,18 +2030,18 @@ test "shape Bengali ligatures with out of order vowels" {
  
          const cells = try shaper.shape(run);
          try testing.expectEqual(@as(usize, 8), cells.len);
@@ -7237,7 +7284,7 @@ index 6960c32..52151ac 100644
  
          // The vowel sign E renders before the SSA:
          try testing.expect(cells[2].x_offset < cells[3].x_offset);
-@@ -1912,6 +2036,126 @@ test "shape Bengali ligatures with out of order vowels" {
+@@ -1912,6 +2049,126 @@ test "shape Bengali ligatures with out of order vowels" {
      try testing.expectEqual(@as(usize, 1), count);
  }
  
@@ -7364,7 +7411,7 @@ index 6960c32..52151ac 100644
  test "shape box glyphs" {
      const testing = std.testing;
      const alloc = testing.allocator;
-@@ -2516,6 +2760,450 @@ test "shape high plane sprite font codepoint" {
+@@ -2516,6 +2773,450 @@ test "shape high plane sprite font codepoint" {
      try testing.expectEqual(null, try it.next(alloc));
  }
  
@@ -7815,7 +7862,7 @@ index 6960c32..52151ac 100644
  const TestShaper = struct {
      alloc: Allocator,
      shaper: Shaper,
-@@ -2531,10 +3219,12 @@ const TestShaper = struct {
+@@ -2531,10 +3232,12 @@ const TestShaper = struct {
  };
  
  const TestFont = enum {
@@ -7828,7 +7875,7 @@ index 6960c32..52151ac 100644
      monaspace_neon,
      nerd_font,
  };
-@@ -2548,10 +3238,12 @@ fn testShaperWithFont(alloc: Allocator, font_req: TestFont) !TestShaper {
+@@ -2548,10 +3251,12 @@ fn testShaperWithFont(alloc: Allocator, font_req: TestFont) !TestShaper {
      const testEmoji = font.embedded.emoji;
      const testEmojiText = font.embedded.emoji_text;
      const testFont = switch (font_req) {
@@ -7841,7 +7888,7 @@ index 6960c32..52151ac 100644
          .monaspace_neon => font.embedded.monaspace_neon,
          .nerd_font => font.embedded.test_nerd_font,
      };
-@@ -2677,3 +3369,298 @@ fn testShaperWithDiscoveredFont(alloc: Allocator, font_req: [:0]const u8) !TestS
+@@ -2677,3 +3382,300 @@ fn testShaperWithDiscoveredFont(alloc: Allocator, font_req: [:0]const u8) !TestS
          .lib = lib,
      };
  }
@@ -7936,7 +7983,9 @@ index 6960c32..52151ac 100644
 +        const run = runs.getValueAtIndex(macos.text.Run, i);
 +        const glyphs = run.getGlyphsPtr() orelse try run.getGlyphs(arena.allocator());
 +        const positions = run.getPositionsPtr() orelse try run.getPositions(arena.allocator());
-+        const advances = run.getAdvancesPtr() orelse try run.getAdvances(arena.allocator());
++        const advances = try arena.allocator().alloc(macos.graphics.Size, glyphs.len);
++        const reference_font = attrs.getValue(macos.text.Font, macos.text.StringAttribute.font.key()).?;
++        _ = reference_font.getAdvancesForGlyphs(.horizontal, glyphs, advances);
 +        for (glyphs, positions, advances) |glyph, position, advance| {
 +            try result.append(alloc, .{ .glyph = glyph, .x = position.x, .y = position.y, .is_mark = advance.width == 0 });
 +        }
@@ -9685,6 +9734,19 @@ index d16bd96..81aba7b 100644
          defer term.deinit(alloc);
  
          // Iterate over unicode codepoints and add to terminal
+diff --git a/src/main.zig b/src/main.zig
+index fe41640..57aa002 100644
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -36,3 +36,8 @@ test {
+     _ = entrypoint;
+     _ = @import("quirks_memset.zig");
+ }
++
++// Dependency-module tests need explicit root-module entry points.
++test {
++    _ = @import("arabic_bidi_conformance.zig");
++}
 diff --git a/src/main_c.zig b/src/main_c.zig
 index 3e331e0..0ed608e 100644
 --- a/src/main_c.zig
