@@ -51,10 +51,10 @@ index 0000000..2a101fe
 +SOFTWARE.
 diff --git a/pkg/itijah/PORT.md b/pkg/itijah/PORT.md
 new file mode 100644
-index 0000000..28744cd
+index 0000000..50cfdca
 --- /dev/null
 +++ b/pkg/itijah/PORT.md
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,27 @@
 +# Embedded itijah provenance
 +
 +Source: DiaaEddin/itijah tag v0.2.1, fetched as
@@ -79,6 +79,9 @@ index 0000000..28744cd
 +39122a5a58460858ae6dc0b17178e797214ae6ec.
 +Rendering and conformance validation remain required; this provenance file
 +is not evidence that those tests have passed.
++
++Array-list initialization uses Zig 0.16 `.empty` instead of the upstream
++0.15 defaults and empty struct literals.
 diff --git a/pkg/itijah/README.md b/pkg/itijah/README.md
 new file mode 100644
 index 0000000..dccd5b5
@@ -676,14 +679,14 @@ index 0000000..4452fe2
 +```
 diff --git a/pkg/itijah/src/core/embedding.zig b/pkg/itijah/src/core/embedding.zig
 new file mode 100644
-index 0000000..f71bd99
+index 0000000..c6f899b
 --- /dev/null
 +++ b/pkg/itijah/src/core/embedding.zig
 @@ -0,0 +1,2578 @@
 +const std = @import("std");
 +const mem = std.mem;
 +const Allocator = mem.Allocator;
-+const ArrayList = std.ArrayListUnmanaged;
++const ArrayList = std.ArrayList;
 +
 +const level_mod = @import("level.zig");
 +const BidiLevel = level_mod.BidiLevel;
@@ -748,18 +751,18 @@ index 0000000..f71bd99
 +};
 +
 +pub const EmbeddingScratch = struct {
-+    classes: ArrayList(BidiClass) = .{},
-+    runs: ArrayList(Run) = .{},
-+    level_runs: ArrayList(LevelRun) = .{},
-+    levels: ArrayList(BidiLevel) = .{},
-+    run_indices_pool: ArrayList(u32) = .{},
-+    sequences: ArrayList(IsolatingRunSequence) = .{},
-+    irs_stack: ArrayList(u32) = .{},
-+    irs_finished: ArrayList(u32) = .{},
-+    irs_seq_meta: ArrayList(IsolatingSeqMeta) = .{},
-+    irs_seq_nodes: ArrayList(IsolatingSeqNode) = .{},
-+    et_run_indices: ArrayList(u32) = .{},
-+    bracket_pairs: ArrayList(BracketPair) = .{},
++    classes: ArrayList(BidiClass) = .empty,
++    runs: ArrayList(Run) = .empty,
++    level_runs: ArrayList(LevelRun) = .empty,
++    levels: ArrayList(BidiLevel) = .empty,
++    run_indices_pool: ArrayList(u32) = .empty,
++    sequences: ArrayList(IsolatingRunSequence) = .empty,
++    irs_stack: ArrayList(u32) = .empty,
++    irs_finished: ArrayList(u32) = .empty,
++    irs_seq_meta: ArrayList(IsolatingSeqMeta) = .empty,
++    irs_seq_nodes: ArrayList(IsolatingSeqNode) = .empty,
++    et_run_indices: ArrayList(u32) = .empty,
++    bracket_pairs: ArrayList(BracketPair) = .empty,
 +
 +    pub fn deinit(self: *EmbeddingScratch, allocator: Allocator) void {
 +        self.classes.deinit(allocator);
@@ -988,7 +991,7 @@ index 0000000..f71bd99
 +    par_dir.* = resolved_dir;
 +
 +    // Build run-length encoded runs
-+    var runs = ArrayList(Run){};
++    var runs = ArrayList(Run).empty;
 +    defer runs.deinit(allocator);
 +    try buildRuns(allocator, &runs, classes, codepoints, len);
 +
@@ -1941,7 +1944,7 @@ index 0000000..f71bd99
 +    base_level: BidiLevel,
 +) !IsolatingRunSequences {
 +    const SequenceBuilder = struct {
-+        ranges: ArrayList(LevelRun) = .{},
++        ranges: ArrayList(LevelRun) = .empty,
 +
 +        fn deinit(self: *@This(), a: Allocator) void {
 +            self.ranges.deinit(a);
@@ -1997,7 +2000,7 @@ index 0000000..f71bd99
 +        };
 +    }
 +
-+    var finished = ArrayList(SequenceBuilder){};
++    var finished = ArrayList(SequenceBuilder).empty;
 +    defer {
 +        for (finished.items) |*seq| seq.deinit(allocator);
 +        finished.deinit(allocator);
@@ -2005,7 +2008,7 @@ index 0000000..f71bd99
 +    try finished.ensureTotalCapacity(allocator, level_runs.len);
 +
 +    if (has_isolates) {
-+        var stack = ArrayList(SequenceBuilder){};
++        var stack = ArrayList(SequenceBuilder).empty;
 +        defer {
 +            for (stack.items) |*seq| seq.deinit(allocator);
 +            stack.deinit(allocator);
@@ -2256,7 +2259,7 @@ index 0000000..f71bd99
 +}
 +
 +fn resolveWeak(allocator: Allocator, runs: []Run, sequences: []const IsolatingRunSequence) !void {
-+    var et_run_indices = ArrayList(u32){};
++    var et_run_indices = ArrayList(u32).empty;
 +    defer et_run_indices.deinit(allocator);
 +    try resolveWeakWithEtBuffer(allocator, &et_run_indices, runs, sequences);
 +}
@@ -2364,7 +2367,7 @@ index 0000000..f71bd99
 +    runs: []const Run,
 +    sequences: []const IsolatingRunSequence,
 +) ![]BracketPair {
-+    var pairs = ArrayList(BracketPair){};
++    var pairs = ArrayList(BracketPair).empty;
 +    errdefer pairs.deinit(allocator);
 +    try collectBracketPairsPerSequenceInto(allocator, &pairs, codepoints, runs, sequences);
 +    return try pairs.toOwnedSlice(allocator);
@@ -2792,7 +2795,7 @@ index 0000000..f71bd99
 +    defer gpa.free(classes);
 +    for (cps, 0..) |cp, i| classes[i] = unicode.bidiClass(cp);
 +
-+    var runs = ArrayList(Run){};
++    var runs = ArrayList(Run).empty;
 +    defer runs.deinit(gpa);
 +    try buildRuns(gpa, &runs, classes, &cps, @intCast(cps.len));
 +    try resolveExplicit(&runs, 0);
@@ -2853,7 +2856,7 @@ index 0000000..f71bd99
 +    defer gpa.free(classes);
 +    for (cps, 0..) |cp, i| classes[i] = unicode.bidiClass(cp);
 +
-+    var runs = ArrayList(Run){};
++    var runs = ArrayList(Run).empty;
 +    defer runs.deinit(gpa);
 +    try buildRuns(gpa, &runs, classes, &cps, @intCast(cps.len));
 +    try resolveExplicit(&runs, 0);
@@ -3019,7 +3022,7 @@ index 0000000..f71bd99
 +    var emb = try getParEmbeddingLevels(gpa, &cps, &dir);
 +    defer emb.deinit(gpa);
 +
-+    var actual_levels = std.ArrayListUnmanaged(BidiLevel){};
++    var actual_levels = std.ArrayList(BidiLevel).empty;
 +    defer actual_levels.deinit(gpa);
 +    for (emb.levels, 0..) |level, idx| {
 +        if (!ignored[idx]) {
@@ -3031,7 +3034,7 @@ index 0000000..f71bd99
 +    var vis = try reorder.reorderLine(gpa, &cps, emb.levels, dir.toLevel());
 +    defer vis.deinit(gpa);
 +
-+    var actual = std.ArrayListUnmanaged(u32){};
++    var actual = std.ArrayList(u32).empty;
 +    defer actual.deinit(gpa);
 +    for (vis.v_to_l) |logical_idx| {
 +        if (!ignored[logical_idx]) {
@@ -3055,7 +3058,7 @@ index 0000000..f71bd99
 +    var emb = try getParEmbeddingLevels(gpa, &cps, &dir);
 +    defer emb.deinit(gpa);
 +
-+    var actual_levels = std.ArrayListUnmanaged(BidiLevel){};
++    var actual_levels = std.ArrayList(BidiLevel).empty;
 +    defer actual_levels.deinit(gpa);
 +    for (emb.levels, 0..) |level, idx| {
 +        if (!ignored[idx]) {
@@ -3067,7 +3070,7 @@ index 0000000..f71bd99
 +    var vis = try reorder.reorderLine(gpa, &cps, emb.levels, dir.toLevel());
 +    defer vis.deinit(gpa);
 +
-+    var actual = std.ArrayListUnmanaged(u32){};
++    var actual = std.ArrayList(u32).empty;
 +    defer actual.deinit(gpa);
 +    for (vis.v_to_l) |logical_idx| {
 +        if (!ignored[logical_idx]) {
@@ -3092,7 +3095,7 @@ index 0000000..f71bd99
 +    var emb = try getParEmbeddingLevels(gpa, &cps, &dir);
 +    defer emb.deinit(gpa);
 +
-+    var actual_levels = std.ArrayListUnmanaged(BidiLevel){};
++    var actual_levels = std.ArrayList(BidiLevel).empty;
 +    defer actual_levels.deinit(gpa);
 +    for (emb.levels, 0..) |level, idx| {
 +        if (!ignored[idx]) {
@@ -3104,7 +3107,7 @@ index 0000000..f71bd99
 +    var vis = try reorder.reorderLine(gpa, &cps, emb.levels, dir.toLevel());
 +    defer vis.deinit(gpa);
 +
-+    var actual = std.ArrayListUnmanaged(u32){};
++    var actual = std.ArrayList(u32).empty;
 +    defer actual.deinit(gpa);
 +    for (vis.v_to_l) |logical_idx| {
 +        if (!ignored[logical_idx]) {
@@ -3148,7 +3151,7 @@ index 0000000..f71bd99
 +    var emb = try getParEmbeddingLevels(gpa, &cps, &dir);
 +    defer emb.deinit(gpa);
 +
-+    var actual_levels = std.ArrayListUnmanaged(BidiLevel){};
++    var actual_levels = std.ArrayList(BidiLevel).empty;
 +    defer actual_levels.deinit(gpa);
 +    for (emb.levels, 0..) |level, idx| {
 +        if (!ignored[idx]) {
@@ -3159,7 +3162,7 @@ index 0000000..f71bd99
 +
 +    var vis = try reorder.reorderLine(gpa, &cps, emb.levels, dir.toLevel());
 +    defer vis.deinit(gpa);
-+    var actual_order = std.ArrayListUnmanaged(u32){};
++    var actual_order = std.ArrayList(u32).empty;
 +    defer actual_order.deinit(gpa);
 +    for (vis.v_to_l) |logical_idx| {
 +        if (!ignored[logical_idx]) {
@@ -3183,7 +3186,7 @@ index 0000000..f71bd99
 +    var emb = try getParEmbeddingLevels(gpa, &cps, &dir);
 +    defer emb.deinit(gpa);
 +
-+    var actual_levels = std.ArrayListUnmanaged(BidiLevel){};
++    var actual_levels = std.ArrayList(BidiLevel).empty;
 +    defer actual_levels.deinit(gpa);
 +    for (emb.levels, 0..) |level, idx| {
 +        if (!ignored[idx]) {
@@ -3194,7 +3197,7 @@ index 0000000..f71bd99
 +
 +    var vis = try reorder.reorderLine(gpa, &cps, emb.levels, dir.toLevel());
 +    defer vis.deinit(gpa);
-+    var actual_order = std.ArrayListUnmanaged(u32){};
++    var actual_order = std.ArrayList(u32).empty;
 +    defer actual_order.deinit(gpa);
 +    for (vis.v_to_l) |logical_idx| {
 +        if (!ignored[logical_idx]) {
@@ -3343,7 +3346,7 @@ index 0000000..db00277
 +}
 diff --git a/pkg/itijah/src/core/reorder.zig b/pkg/itijah/src/core/reorder.zig
 new file mode 100644
-index 0000000..a2facec
+index 0000000..608d62b
 --- /dev/null
 +++ b/pkg/itijah/src/core/reorder.zig
 @@ -0,0 +1,843 @@
@@ -3362,9 +3365,9 @@ index 0000000..a2facec
 +const compact_map_min_len: u32 = 8192;
 +
 +pub const ReorderScratch = struct {
-+    visual: std.ArrayListUnmanaged(u21) = .{},
-+    map16: std.ArrayListUnmanaged(u16) = .{},
-+    map32: std.ArrayListUnmanaged(u32) = .{},
++    visual: std.ArrayList(u21) = .empty,
++    map16: std.ArrayList(u16) = .empty,
++    map32: std.ArrayList(u32) = .empty,
 +
 +    pub fn deinit(self: *ReorderScratch, allocator: Allocator) void {
 +        self.visual.deinit(allocator);
@@ -3374,9 +3377,9 @@ index 0000000..a2facec
 +};
 +
 +pub const ReorderLineScratch = struct {
-+    visual: std.ArrayListUnmanaged(u21) = .{},
-+    l_to_v: std.ArrayListUnmanaged(u32) = .{},
-+    v_to_l: std.ArrayListUnmanaged(u32) = .{},
++    visual: std.ArrayList(u21) = .empty,
++    l_to_v: std.ArrayList(u32) = .empty,
++    v_to_l: std.ArrayList(u32) = .empty,
 +
 +    pub fn deinit(self: *ReorderLineScratch, allocator: Allocator) void {
 +        self.visual.deinit(allocator);
@@ -3386,8 +3389,8 @@ index 0000000..a2facec
 +};
 +
 +pub const VisualRunsScratch = struct {
-+    v_to_l: std.ArrayListUnmanaged(u32) = .{},
-+    runs: std.ArrayListUnmanaged(types.VisualRun) = .{},
++    v_to_l: std.ArrayList(u32) = .empty,
++    runs: std.ArrayList(types.VisualRun) = .empty,
 +
 +    pub fn deinit(self: *VisualRunsScratch, allocator: Allocator) void {
 +        self.v_to_l.deinit(allocator);
@@ -3396,8 +3399,8 @@ index 0000000..a2facec
 +};
 +
 +pub const LogToVisScratch = struct {
-+    v_to_l: std.ArrayListUnmanaged(u32) = .{},
-+    l_to_v: std.ArrayListUnmanaged(u32) = .{},
++    v_to_l: std.ArrayList(u32) = .empty,
++    l_to_v: std.ArrayList(u32) = .empty,
 +
 +    pub fn deinit(self: *LogToVisScratch, allocator: Allocator) void {
 +        self.v_to_l.deinit(allocator);
@@ -3684,7 +3687,7 @@ index 0000000..a2facec
 +    const extents = levelExtents(levels, base_level);
 +    applyL2(v_to_l, levels, len, extents.min_odd, extents.max_level);
 +
-+    var runs = std.ArrayListUnmanaged(types.VisualRun){};
++    var runs = std.ArrayList(types.VisualRun).empty;
 +    errdefer runs.deinit(allocator);
 +    try buildVisualRunsFromVToL(allocator, &runs, v_to_l, levels);
 +
@@ -3775,7 +3778,7 @@ index 0000000..a2facec
 +
 +fn buildVisualRunsFromVToL(
 +    allocator: Allocator,
-+    runs: *std.ArrayListUnmanaged(types.VisualRun),
++    runs: *std.ArrayList(types.VisualRun),
 +    v_to_l: []const u32,
 +    levels: []const BidiLevel,
 +) !void {
@@ -4156,7 +4159,7 @@ index 0000000..a2facec
 +    const runs = try visualRuns(gpa, &levels, 0);
 +    defer gpa.free(runs);
 +
-+    var rebuilt = std.ArrayListUnmanaged(u32){};
++    var rebuilt = std.ArrayList(u32).empty;
 +    defer rebuilt.deinit(gpa);
 +    try rebuilt.ensureTotalCapacity(gpa, reordered.v_to_l.len);
 +
@@ -4698,7 +4701,7 @@ index 0000000..6d355cd
 +}
 diff --git a/pkg/itijah/src/lib.zig b/pkg/itijah/src/lib.zig
 new file mode 100644
-index 0000000..48e62bf
+index 0000000..4939712
 --- /dev/null
 +++ b/pkg/itijah/src/lib.zig
 @@ -0,0 +1,472 @@
@@ -4748,8 +4751,8 @@ index 0000000..48e62bf
 +    embedding: EmbeddingScratch = .{},
 +    log_to_vis: LogToVisScratch = .{},
 +    visual_runs: VisualRunsScratch = .{},
-+    levels: std.ArrayListUnmanaged(BidiLevel) = .{},
-+    v_to_l: std.ArrayListUnmanaged(u32) = .{},
++    levels: std.ArrayList(BidiLevel) = .empty,
++    v_to_l: std.ArrayList(u32) = .empty,
 +
 +    pub fn deinit(self: *VisualLayoutScratch, allocator: Allocator) void {
 +        self.embedding.deinit(allocator);
@@ -5215,7 +5218,7 @@ index 0000000..3d7fc7b
 +}
 diff --git a/pkg/itijah/src/test/conformance.zig b/pkg/itijah/src/test/conformance.zig
 new file mode 100644
-index 0000000..03cadfa
+index 0000000..230dbec
 --- /dev/null
 +++ b/pkg/itijah/src/test/conformance.zig
 @@ -0,0 +1,452 @@
@@ -5349,7 +5352,7 @@ index 0000000..03cadfa
 +
 +fn parseExpectedLevelsInto(
 +    allocator: std.mem.Allocator,
-+    out: *std.ArrayListUnmanaged(ExpectedLevel),
++    out: *std.ArrayList(ExpectedLevel),
 +    raw: []const u8,
 +) !void {
 +    out.clearRetainingCapacity();
@@ -5366,7 +5369,7 @@ index 0000000..03cadfa
 +
 +fn parseExpectedOrderingInto(
 +    allocator: std.mem.Allocator,
-+    out: *std.ArrayListUnmanaged(u32),
++    out: *std.ArrayList(u32),
 +    raw: []const u8,
 +) !void {
 +    out.clearRetainingCapacity();
@@ -5423,7 +5426,7 @@ index 0000000..03cadfa
 +        if (vis.v_to_l[vis.l_to_v[logical_idx]] != logical_idx) return false;
 +    }
 +
-+    var actual_ordering = std.ArrayListUnmanaged(u32){};
++    var actual_ordering = std.ArrayList(u32).empty;
 +    defer actual_ordering.deinit(allocator);
 +    for (vis.v_to_l) |logical_idx| {
 +        if (!expected_levels[logical_idx].ignored) {
@@ -5446,14 +5449,14 @@ index 0000000..03cadfa
 +    var have_expected_levels = false;
 +    var have_expected_reorder = false;
 +
-+    var expected_levels = std.ArrayListUnmanaged(ExpectedLevel){};
++    var expected_levels = std.ArrayList(ExpectedLevel).empty;
 +    defer expected_levels.deinit(allocator);
-+    var expected_ordering = std.ArrayListUnmanaged(u32){};
++    var expected_ordering = std.ArrayList(u32).empty;
 +    defer expected_ordering.deinit(allocator);
 +
-+    var classes = std.ArrayListUnmanaged(itijah.BidiClass){};
++    var classes = std.ArrayList(itijah.BidiClass).empty;
 +    defer classes.deinit(allocator);
-+    var cps = std.ArrayListUnmanaged(u21){};
++    var cps = std.ArrayList(u21).empty;
 +    defer cps.deinit(allocator);
 +
 +    var line_iter = std.mem.splitScalar(u8, bidi_test_data, '\n');
@@ -5556,11 +5559,11 @@ index 0000000..03cadfa
 +fn runBidiCharacterTest(allocator: std.mem.Allocator, mode: Mode) !Stats {
 +    var stats = Stats{};
 +    var line_iter = std.mem.splitScalar(u8, bidi_char_test_data, '\n');
-+    var cps = std.ArrayListUnmanaged(u21){};
++    var cps = std.ArrayList(u21).empty;
 +    defer cps.deinit(allocator);
-+    var expected_levels = std.ArrayListUnmanaged(ExpectedLevel){};
++    var expected_levels = std.ArrayList(ExpectedLevel).empty;
 +    defer expected_levels.deinit(allocator);
-+    var expected_ordering = std.ArrayListUnmanaged(u32){};
++    var expected_ordering = std.ArrayList(u32).empty;
 +    defer expected_ordering.deinit(allocator);
 +
 +    while (line_iter.next()) |line| {
