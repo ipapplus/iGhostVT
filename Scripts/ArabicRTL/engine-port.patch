@@ -6834,7 +6834,7 @@ index 0000000..de8cbf8
 +    };
 +}
 diff --git a/src/font/shaper/coretext.zig b/src/font/shaper/coretext.zig
-index 6960c32..d091887 100644
+index 6960c32..adfdc09 100644
 --- a/src/font/shaper/coretext.zig
 +++ b/src/font/shaper/coretext.zig
 @@ -3,6 +3,8 @@ const builtin = @import("builtin");
@@ -7815,7 +7815,7 @@ index 6960c32..d091887 100644
          .monaspace_neon => font.embedded.monaspace_neon,
          .nerd_font => font.embedded.test_nerd_font,
      };
-@@ -2677,3 +3349,247 @@ fn testShaperWithDiscoveredFont(alloc: Allocator, font_req: [:0]const u8) !TestS
+@@ -2677,3 +3349,286 @@ fn testShaperWithDiscoveredFont(alloc: Allocator, font_req: [:0]const u8) !TestS
          .lib = lib,
      };
  }
@@ -7986,7 +7986,12 @@ index 6960c32..d091887 100644
 +            }
 +            std.mem.sort(ArabicOracleGlyph, actual.items, {}, ArabicOracleGlyph.lessThan);
 +            try testing.expectEqual(expected.len, actual.items.len);
-+            for (expected, actual.items) |want, got| try testing.expectEqual(want.glyph, got.glyph);
++            for (expected, actual.items, 0..) |want, got, index| {
++                if (want.glyph != got.glyph) {
++                    std.debug.print("[DEBUG-rtl-oracle] mismatch={d} cell_width={d} expected={any} actual={any}\n", .{ index, testdata.grid.metrics.cell_width, expected, actual.items });
++                }
++                try testing.expectEqual(want.glyph, got.glyph);
++            }
 +        }
 +    }
 +}
@@ -8059,6 +8064,40 @@ index 6960c32..d091887 100644
 +        for (cells) |cell| {
 +            const visual_x = current.offset + cell.x;
 +            try testing.expectEqual(@as(u16, @intCast(9 - visual_x)), current.logicalCellIndex(visual_x));
++        }
++        run = try it.next(alloc);
++    }
++}
++
++
++test "shape mixed Arabic Latin color spans map to logical source cells" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    var testdata = try testShaperWithFont(alloc, .arabic);
++    defer testdata.deinit();
++    var t = try terminal.Terminal.init(testing.io, alloc, .{ .cols = 40, .rows = 3 });
++    defer t.deinit(alloc);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    stream.nextSlice("\x1b[32mمرحبا \x1b[31mCodex\x1b[0m");
++    var state: terminal.RenderState = .empty;
++    defer state.deinit(alloc);
++    try state.update(alloc, &t);
++    const row = state.row_data.get(0).cells.slice();
++    const styles = row.items(.style);
++    const expected = [_]usize{ 6, 7, 8, 9, 10, 5, 4, 3, 2, 1, 0 };
++    var it = testdata.shaper.runIterator(.{ .grid = testdata.grid, .cells = row });
++    var run = try it.next(alloc);
++    for (expected, 0..) |logical_x, visual_x| {
++        try testing.expectEqual(logical_x, it.logicalCellIndex(visual_x));
++    }
++    try testing.expect(!styles[0].eql(styles[6]));
++    try testing.expect(styles[it.logicalCellIndex(0)].eql(styles[6]));
++    while (run) |current| {
++        const cells = try testdata.shaper.shape(current);
++        for (cells) |cell| {
++            const visual_x = current.offset + cell.x;
++            try testing.expectEqual(@as(u16, @intCast(expected[visual_x])), current.logicalCellIndex(visual_x));
 +        }
 +        run = try it.next(alloc);
 +    }
@@ -8908,7 +8947,7 @@ index e5a0865..f994ee7 100644
  };
  
 diff --git a/src/font/shaper/run.zig b/src/font/shaper/run.zig
-index 9f33ba3..5a34c83 100644
+index 9f33ba3..410c9b1 100644
 --- a/src/font/shaper/run.zig
 +++ b/src/font/shaper/run.zig
 @@ -4,8 +4,20 @@ const Allocator = std.mem.Allocator;
@@ -8932,7 +8971,7 @@ index 9f33ba3..5a34c83 100644
  
  /// A single text run. A text run is only valid for one Shaper instance and
  /// until the next run is created. A text run never goes across multiple
-@@ -36,13 +48,38 @@ pub const TextRun = struct {
+@@ -36,13 +48,41 @@ pub const TextRun = struct {
  
      /// The font index to use for the glyphs of this run.
      font_index: font.Collection.Index,
@@ -8945,8 +8984,10 @@ index 9f33ba3..5a34c83 100644
 +    logical_offset: ?u16 = null,
 +
 +    pub fn logicalCellIndex(self: TextRun, visual_x: u16) u16 {
-+        _ = self;
-+        return visual_x;
++        assert(visual_x >= self.offset and visual_x < self.offset + self.cells);
++        const relative = visual_x - self.offset;
++        const logical_start = self.logical_offset orelse self.offset;
++        return logical_start + if (self.rtl) self.cells - 1 - relative else relative;
 +    }
  };
  
@@ -8965,13 +9006,14 @@ index 9f33ba3..5a34c83 100644
 +
 +    /// Source cell whose attributes accompany this visual paint column.
 +    pub fn logicalCellIndex(self: *const RunIterator, visual_x: usize) usize {
-+        _ = self;
-+        return visual_x;
++        assert(self.layout_ready);
++        const run = findVisualRun(self.visual_runs, visual_x) orelse return visual_x;
++        return @intCast(itijah.logicalIndexForVisual(run, @intCast(visual_x)));
 +    }
  
      pub fn next(self: *RunIterator, alloc: Allocator) !?TextRun {
          const slice = &self.opts.cells;
-@@ -50,257 +87,293 @@ pub const RunIterator = struct {
+@@ -50,257 +90,293 @@ pub const RunIterator = struct {
          const graphemes: []const []const u21 = slice.items(.grapheme);
          const styles: []const terminal.Style = slice.items(.style);
  
@@ -9482,7 +9524,7 @@ index 9f33ba3..5a34c83 100644
      }
  
      fn addCodepoint(self: *RunIterator, hasher: anytype, cp: u32, cluster: u32) !void {
-@@ -380,8 +453,72 @@ pub const RunIterator = struct {
+@@ -380,8 +456,72 @@ pub const RunIterator = struct {
  
          return null;
      }

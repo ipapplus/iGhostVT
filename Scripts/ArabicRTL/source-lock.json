@@ -4,12 +4,14 @@
   "engine_baseline": "1e9e14af5df14211892f5fc15fd21a49c7d94868",
   "rtl_primary": "0d4ba38f86dea76784d7e7c3760202a1e67c8118",
   "rtl_additional": "39122a5a58460858ae6dc0b17178e797214ae6ec",
-  "rtl_implementation_commit": "ccf73ba0cb3571a9fc8492856f35c9a335f409f4",
+  "rtl_implementation_commit": "c614d8a56694d984454eadff996a7ca082763c30",
   "zig_version": "0.16.0",
-  "engine_patch_sha256": "793ba12b8d47bc6739f6e67687fff936134326f0177ec9745aee03f2fe81ed52",
+  "engine_patch_sha256": "0b53eac6b59125e019342e5893806ee6c7cf2a694840903311dbb747fb938d67",
   "itijah_version": "0.2.1",
   "itijah_archive_sha256": "b885878fe9edf5a2b2b2fc270aa74cfa498eeafd1a2fc60cdb4aa275d3047093",
   "unicode_conformance_version": "16.0.0",
   "unicode_archive_sha256": "c86dd81f2b14a43b0cc064aa5f89aa7241386801e35c59c7984e579832634eb2",
-  "binary_marker": "iGhostVT-ArabicRTL-coretext-itijah-0.2.1-20261019"
+  "binary_marker": "iGhostVT-ArabicRTL-coretext-itijah-0.2.1-20261019",
+  "font_backend": "coretext",
+  "xcode_version_requested": "26.3"
 }

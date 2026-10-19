@@ -1,12 +1,17 @@
-name: Arabic RTL baseline (diagnostic only)
+name: Arabic RTL build and diagnostics
 on:
   workflow_dispatch:
     inputs:
       runner:
         description: Hosted macOS runner pool
         type: choice
-        default: macos-26
+        default: macos-15-intel
         options: [macos-26, macos-15, macos-15-intel]
+      xcode:
+        description: Exact Xcode version
+        type: choice
+        default: '26.3'
+        options: ['26.3', '26.6']
       mode:
         description: Diagnostic scope
         type: choice
@@ -44,11 +49,14 @@ jobs:
           path: integration
           persist-credentials: false
       - name: Select Xcode and packaging tools on the runner
+        env:
+          XCODE_VERSION: ${{ inputs.xcode }}
         shell: bash
         run: |
           set -euo pipefail
-          latest="$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)"
-          sudo xcode-select -s "$latest/Contents/Developer"
+          selected="/Applications/Xcode_${XCODE_VERSION}.app"
+          test -d "$selected"
+          sudo xcode-select -s "$selected/Contents/Developer"
           mkdir -p evidence
           xcodebuild -version | tee evidence/xcode-version.log
           swift --version | tee evidence/swift-version.log

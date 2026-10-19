@@ -24,6 +24,7 @@ cd "$engine"
 zig build test --summary all -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dfont-backend=coretext_harfbuzz -Dtest-filter=shape 2>&1 | tee "$evidence/rtl-harfbuzz-shapers.log"
 zig build test --summary all -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dfont-backend=coretext -Dtest-filter=conformance -Dbidi-conformance-data=true -Doptimize=ReleaseSafe 2>&1 | tee "$evidence/bidi-conformance.log"
 
+export ZIG_BUILD_EXTRA_ARGS="-Dfont-backend=coretext"
 cd "$wrapper"
 ./Script/build-platform.sh "$engine" macos "$wrapper/build/rtl-artifacts" 2>&1 | tee "$evidence/rtl-macos-build.log"
 ./Script/build-ghostty.sh "$engine" aarch64-ios "$wrapper/build/rtl-artifacts/iphoneos" 2>&1 | tee "$evidence/rtl-ios-build.log"
