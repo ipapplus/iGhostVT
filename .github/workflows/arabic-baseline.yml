@@ -7,6 +7,11 @@ on:
         type: choice
         default: macos-26
         options: [macos-26, macos-15]
+      mode:
+        description: Diagnostic scope
+        type: choice
+        default: baseline
+        options: [baseline, arabic-regression]
 permissions:
   contents: read
 jobs:
@@ -32,6 +37,12 @@ jobs:
           ref: 1e9e14af5df14211892f5fc15fd21a49c7d94868
           path: engine
           persist-credentials: false
+      - uses: actions/checkout@v5
+        if: inputs.mode == 'arabic-regression'
+        with:
+          ref: ${{ github.sha }}
+          path: integration
+          persist-credentials: false
       - name: Select Xcode and packaging tools on the runner
         shell: bash
         run: |
@@ -47,6 +58,7 @@ jobs:
         with:
           version: 0.16.0
       - name: Project checks and isolated host harnesses
+        if: inputs.mode == 'baseline'
         working-directory: app
         shell: bash
         run: |
@@ -54,6 +66,7 @@ jobs:
           make check 2>&1 | tee ../evidence/make-check.log
           make test 2>&1 | tee ../evidence/make-test.log
       - name: Rebuild baseline engine (not an RTL deliverable)
+        if: inputs.mode == 'baseline'
         working-directory: wrapper
         shell: bash
         run: |
@@ -64,11 +77,24 @@ jobs:
           swift test 2>&1 | tee ../evidence/swift-test.log
           xcodebuild -scheme GhosttyTerminal -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build 2>&1 | tee ../evidence/wrapper-ios-build.log
       - name: Exercise actual baseline shapers
+        if: inputs.mode == 'baseline'
         working-directory: engine
         shell: bash
         run: |
           set -euo pipefail
           zig build test -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dtest-filter=shape 2>&1 | tee ../evidence/baseline-shapers.log
+      - name: Reproduce Arabic contextual glyph and visual order failure
+        if: inputs.mode == 'arabic-regression'
+        working-directory: wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          zig version | tee ../evidence/zig-version.log
+          ./Script/apply-patches.sh "$GITHUB_WORKSPACE/engine" 2>&1 | tee ../evidence/wrapper-patches.log
+          git -C "$GITHUB_WORKSPACE/engine" apply --check "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/coretext-regression.patch"
+          git -C "$GITHUB_WORKSPACE/engine" apply "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/coretext-regression.patch"
+          cd "$GITHUB_WORKSPACE/engine"
+          zig build test -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false '-Dtest-filter=shape Arabic phrase contextual glyphs in visual cell order' 2>&1 | tee ../evidence/arabic-coretext-regression.log
       - name: Preserve diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,0 +1,64 @@
+diff --git a/src/font/shaper/coretext.zig b/src/font/shaper/coretext.zig
+index 6960c32..c5edd1c 100644
+--- a/src/font/shaper/coretext.zig
++++ b/src/font/shaper/coretext.zig
+@@ -2531,6 +2531,7 @@ const TestShaper = struct {
+ };
+ 
+ const TestFont = enum {
++    arabic,
+     code_new_roman,
+     geist_mono,
+     inconsolata,
+@@ -2548,6 +2549,7 @@ fn testShaperWithFont(alloc: Allocator, font_req: TestFont) !TestShaper {
+     const testEmoji = font.embedded.emoji;
+     const testEmojiText = font.embedded.emoji_text;
+     const testFont = switch (font_req) {
++        .arabic => font.embedded.arabic,
+         .code_new_roman => font.embedded.code_new_roman,
+         .inconsolata => font.embedded.inconsolata,
+         .geist_mono => font.embedded.geist_mono,
+@@ -2677,3 +2679,43 @@ fn testShaperWithDiscoveredFont(alloc: Allocator, font_req: [:0]const u8) !TestS
+         .lib = lib,
+     };
+ }
++
++// Presentation-form cmap glyphs are an independent oracle for this embedded
++// font: each glyph must appear in visual order while grid text stays logical.
++test "shape Arabic phrase contextual glyphs in visual cell order" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    var testdata = try testShaperWithFont(alloc, .arabic);
++    defer testdata.deinit();
++
++    var t = try terminal.Terminal.init(testing.io, alloc, .{ .cols = 40, .rows = 3 });
++    defer t.deinit(alloc);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    stream.nextSlice("مرحبا بالعالم");
++
++    var state: terminal.RenderState = .empty;
++    defer state.deinit(alloc);
++    try state.update(alloc, &t);
++    var shaper = &testdata.shaper;
++    var it = shaper.runIterator(.{
++        .grid = testdata.grid,
++        .cells = state.row_data.get(0).cells.slice(),
++    });
++    const run = (try it.next(alloc)).?;
++    try testing.expectEqual(@as(u16, 13), run.cells);
++    const cells = try shaper.shape(run);
++    const visual_forms = [_]u32{
++        0xFEE2, 0xFEDF, 0xFE8E, 0xFECC, 0xFEDF, 0xFE8E, 0xFE91,
++        0x0020, 0xFE8E, 0xFE92, 0xFEA3, 0xFEAE, 0xFEE3,
++    };
++    try testing.expectEqual(visual_forms.len, cells.len);
++    const face = try run.grid.resolver.collection.getFace(run.font_index);
++    for (visual_forms, cells, 0..) |cp, cell, x| {
++        const expected_glyph = face.glyphIndex(cp);
++        try testing.expect(expected_glyph != null);
++        try testing.expectEqual(expected_glyph.?, cell.glyph_index);
++        try testing.expectEqual(@as(u16, @intCast(x)), cell.x);
++    }
++    try testing.expectEqual(null, try it.next(alloc));
++}
