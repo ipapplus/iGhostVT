@@ -11,7 +11,7 @@ on:
         description: Diagnostic scope
         type: choice
         default: baseline
-        options: [baseline, arabic-regression, rtl-shapers]
+        options: [baseline, arabic-regression, rtl-shapers, rtl-package]
 permissions:
   contents: read
 jobs:
@@ -96,7 +96,7 @@ jobs:
           cd "$GITHUB_WORKSPACE/engine"
           zig build test -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false '-Dtest-filter=shape Arabic phrase contextual glyphs in visual cell order' 2>&1 | tee ../evidence/arabic-coretext-regression.log
       - name: Test the pinned Arabic RTL port with wrapper patches
-        if: inputs.mode == 'rtl-shapers'
+        if: inputs.mode == 'rtl-shapers' || inputs.mode == 'rtl-package'
         working-directory: wrapper
         shell: bash
         run: |
@@ -109,6 +109,23 @@ jobs:
           zig fmt src/font/shaper src/build/GhosttyZig.zig src/build/SharedDeps.zig src/build/uucode_config.zig pkg/itijah
           git diff --binary HEAD > ../evidence/engine-effective.patch
           zig build test -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dtest-filter=shape 2>&1 | tee ../evidence/rtl-coretext-shapers.log
+      - name: Build, integrate and verify the custom RootHide package
+        if: inputs.mode == 'rtl-package'
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/build-package.sh"
+      - name: Build and verify the optional rootless package
+        if: inputs.mode == 'rtl-package'
+        continue-on-error: true
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/build-rootless.sh"
+      - name: Upload verified custom deliverables
+        if: inputs.mode == 'rtl-package' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iGhostVT-Arabic-RTL-packages
+          path: deliverables/
+          if-no-files-found: error
+          retention-days: 30
       - name: Preserve diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4

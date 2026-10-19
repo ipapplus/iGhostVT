@@ -1,0 +1,15 @@
+{
+  "app_baseline": "dd1b3be882e6dea667bc754d5f52caf30095be4b",
+  "wrapper_commit": "dfe0cb03415cb2371d71ed46cd4db0614bef84eb",
+  "engine_baseline": "1e9e14af5df14211892f5fc15fd21a49c7d94868",
+  "rtl_primary": "0d4ba38f86dea76784d7e7c3760202a1e67c8118",
+  "rtl_additional": "39122a5a58460858ae6dc0b17178e797214ae6ec",
+  "rtl_implementation_commit": "ae5ca483372f82012d1df47c1f74a3e4ccc8d28b",
+  "zig_version": "0.16.0",
+  "engine_patch_sha256": "745f75fc81290f8ecb162cb6550d78fbf46b6f1ea3127f47e03ee15fff3580a0",
+  "itijah_version": "0.2.1",
+  "itijah_archive_sha256": "b885878fe9edf5a2b2b2fc270aa74cfa498eeafd1a2fc60cdb4aa275d3047093",
+  "unicode_conformance_version": "16.0.0",
+  "unicode_archive_sha256": "c86dd81f2b14a43b0cc064aa5f89aa7241386801e35c59c7984e579832634eb2",
+  "binary_marker": "iGhostVT-ArabicRTL-coretext-itijah-0.2.1-20261019"
+}
