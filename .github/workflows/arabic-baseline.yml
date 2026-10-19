@@ -91,7 +91,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          zig build test -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dtest-filter=shape 2>&1 | tee ../evidence/baseline-shapers.log
+          zig build test --summary all -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dtest-filter=shape 2>&1 | tee ../evidence/baseline-shapers.log
       - name: Reproduce Arabic contextual glyph and visual order failure
         if: inputs.mode == 'arabic-regression'
         working-directory: wrapper
@@ -103,7 +103,7 @@ jobs:
           git -C "$GITHUB_WORKSPACE/engine" apply --check "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/coretext-regression.patch"
           git -C "$GITHUB_WORKSPACE/engine" apply "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/coretext-regression.patch"
           cd "$GITHUB_WORKSPACE/engine"
-          zig build test -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false '-Dtest-filter=shape Arabic phrase contextual glyphs in visual cell order' 2>&1 | tee ../evidence/arabic-coretext-regression.log
+          zig build test --summary all -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false '-Dtest-filter=shape Arabic phrase contextual glyphs in visual cell order' 2>&1 | tee ../evidence/arabic-coretext-regression.log
       - name: Test the pinned Arabic RTL port with wrapper patches
         if: inputs.mode == 'rtl-shapers' || inputs.mode == 'rtl-package'
         working-directory: wrapper
@@ -115,9 +115,9 @@ jobs:
           git -C "$GITHUB_WORKSPACE/engine" apply "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/engine-port.patch"
           ./Script/apply-patches.sh "$GITHUB_WORKSPACE/engine" 2>&1 | tee ../evidence/wrapper-patches.log
           cd "$GITHUB_WORKSPACE/engine"
-          zig fmt src/font/shaper src/build/GhosttyZig.zig src/build/SharedDeps.zig src/build/uucode_config.zig pkg/itijah
+          zig fmt src/font/shaper src/renderer/generic.zig src/main_c.zig src/build/GhosttyZig.zig src/build/SharedDeps.zig src/build/uucode_config.zig pkg/itijah
           git diff --binary HEAD > ../evidence/engine-effective.patch
-          zig build test -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dtest-filter=shape 2>&1 | tee ../evidence/rtl-coretext-shapers.log
+          zig build test --summary all -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dtest-filter=shape 2>&1 | tee ../evidence/rtl-coretext-shapers.log
       - name: Build, integrate and verify the custom RootHide package
         if: inputs.mode == 'rtl-package'
         shell: bash

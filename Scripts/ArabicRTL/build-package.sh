@@ -21,8 +21,8 @@ PYLOCK
 
 python3 "$control/fetch-conformance-data.py" "$engine/pkg/itijah/testdata" | tee "$evidence/unicode-fixtures.json"
 cd "$engine"
-zig build test -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dfont-backend=coretext_harfbuzz -Dtest-filter=shape 2>&1 | tee "$evidence/rtl-harfbuzz-shapers.log"
-zig build test -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dfont-backend=coretext -Dtest-filter=conformance -Dbidi-conformance-data=true -Doptimize=ReleaseSafe 2>&1 | tee "$evidence/bidi-conformance.log"
+zig build test --summary all -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dfont-backend=coretext_harfbuzz -Dtest-filter=shape 2>&1 | tee "$evidence/rtl-harfbuzz-shapers.log"
+zig build test --summary all -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dfont-backend=coretext -Dtest-filter=conformance -Dbidi-conformance-data=true -Doptimize=ReleaseSafe 2>&1 | tee "$evidence/bidi-conformance.log"
 
 cd "$wrapper"
 ./Script/build-platform.sh "$engine" macos "$wrapper/build/rtl-artifacts" 2>&1 | tee "$evidence/rtl-macos-build.log"

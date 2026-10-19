@@ -6834,7 +6834,7 @@ index 0000000..de8cbf8
 +    };
 +}
 diff --git a/src/font/shaper/coretext.zig b/src/font/shaper/coretext.zig
-index 6960c32..6f2b4ee 100644
+index 6960c32..d091887 100644
 --- a/src/font/shaper/coretext.zig
 +++ b/src/font/shaper/coretext.zig
 @@ -3,6 +3,8 @@ const builtin = @import("builtin");
@@ -7815,7 +7815,7 @@ index 6960c32..6f2b4ee 100644
          .monaspace_neon => font.embedded.monaspace_neon,
          .nerd_font => font.embedded.test_nerd_font,
      };
-@@ -2677,3 +3349,207 @@ fn testShaperWithDiscoveredFont(alloc: Allocator, font_req: [:0]const u8) !TestS
+@@ -2677,3 +3349,247 @@ fn testShaperWithDiscoveredFont(alloc: Allocator, font_req: [:0]const u8) !TestS
          .lib = lib,
      };
  }
@@ -7851,8 +7851,14 @@ index 6960c32..6f2b4ee 100644
 +    };
 +    try testing.expectEqual(visual_forms.len, cells.len);
 +    const face = try run.grid.resolver.collection.getFace(run.font_index);
++    // Kawkab's contextual substitution selects its named medial-ain variant
++    // before alef. The cmap's generic U+FECC glyph is not the expected form.
++    const name = try macos.foundation.String.createWithBytes("uniFECC.ainAlef", .utf8, false);
++    defer name.release();
++    const contextual_ain = macos.c.CTFontGetGlyphWithName(@ptrCast(face.font), @ptrCast(name));
++    try testing.expect(contextual_ain != 0);
 +    for (visual_forms, cells, 0..) |cp, cell, x| {
-+        const expected_glyph = face.glyphIndex(cp);
++        const expected_glyph = if (x == 3) @as(?u32, contextual_ain) else face.glyphIndex(cp);
 +        try testing.expect(expected_glyph != null);
 +        try testing.expectEqual(expected_glyph.?, cell.glyph_index);
 +        try testing.expectEqual(@as(u16, @intCast(x)), cell.x);
@@ -7931,6 +7937,7 @@ index 6960c32..6f2b4ee 100644
 +    var testdata = try testShaperWithFont(alloc, .arabic);
 +    defer testdata.deinit();
 +    for (phrases) |phrase| {
++        errdefer std.debug.print("Arabic oracle fixture: {s}\n", .{phrase});
 +        const expected = try arabicNaturalCoreTextOracle(alloc, &testdata.shaper, testdata.grid, phrase);
 +        defer alloc.free(expected);
 +        var t = try terminal.Terminal.init(testing.io, alloc, .{ .cols = 120, .rows = 3 });
@@ -7952,7 +7959,7 @@ index 6960c32..6f2b4ee 100644
 +            for (row.items(.raw), row.items(.grapheme)) |cell, marks| {
 +                if (cell.codepoint() == 0) break;
 +                try logical.append(alloc, @intCast(cell.codepoint()));
-+                try logical.appendSlice(alloc, marks);
++                if (cell.hasGrapheme()) try logical.appendSlice(alloc, marks);
 +            }
 +            var decoded: std.ArrayList(u21) = .empty;
 +            defer decoded.deinit(alloc);
@@ -8021,6 +8028,39 @@ index 6960c32..6f2b4ee 100644
 +        const after = try t.screens.active.dumpStringAlloc(alloc, .{ .active = .{} });
 +        defer alloc.free(after);
 +        try testing.expectEqualStrings(before, after);
++    }
++}
++
++
++test "shape Arabic visual painting attributes use logical source cells" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    var testdata = try testShaperWithFont(alloc, .arabic);
++    defer testdata.deinit();
++    var t = try terminal.Terminal.init(testing.io, alloc, .{ .cols = 40, .rows = 3 });
++    defer t.deinit(alloc);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    stream.nextSlice("\x1b[31mمرحبا\x1b[32m عالم\x1b[0m");
++    var state: terminal.RenderState = .empty;
++    defer state.deinit(alloc);
++    try state.update(alloc, &t);
++    const row = state.row_data.get(0).cells.slice();
++    const styles = row.items(.style);
++    var it = testdata.shaper.runIterator(.{ .grid = testdata.grid, .cells = row });
++    var run = try it.next(alloc);
++    try testing.expect(!styles[0].eql(styles[9]));
++    // The first visual cell belongs to the green word, not the red word
++    // at logical column zero. The renderer uses this exact mapping seam.
++    try testing.expect(styles[it.logicalCellIndex(0)].eql(styles[9]));
++    for (0..10) |x| try testing.expectEqual(9 - x, it.logicalCellIndex(x));
++    while (run) |current| {
++        const cells = try testdata.shaper.shape(current);
++        for (cells) |cell| {
++            const visual_x = current.offset + cell.x;
++            try testing.expectEqual(@as(u16, @intCast(9 - visual_x)), current.logicalCellIndex(visual_x));
++        }
++        run = try it.next(alloc);
 +    }
 +}
 diff --git a/src/font/shaper/harfbuzz.zig b/src/font/shaper/harfbuzz.zig
@@ -8868,7 +8908,7 @@ index e5a0865..f994ee7 100644
  };
  
 diff --git a/src/font/shaper/run.zig b/src/font/shaper/run.zig
-index 9f33ba3..9786789 100644
+index 9f33ba3..5a34c83 100644
 --- a/src/font/shaper/run.zig
 +++ b/src/font/shaper/run.zig
 @@ -4,8 +4,20 @@ const Allocator = std.mem.Allocator;
@@ -8892,13 +8932,22 @@ index 9f33ba3..9786789 100644
  
  /// A single text run. A text run is only valid for one Shaper instance and
  /// until the next run is created. A text run never goes across multiple
-@@ -36,13 +48,23 @@ pub const TextRun = struct {
+@@ -36,13 +48,38 @@ pub const TextRun = struct {
  
      /// The font index to use for the glyphs of this run.
      font_index: font.Collection.Index,
 +
 +    /// Whether this run is RTL according to visual runs from the bidi resolver.
 +    rtl: bool = false,
++
++    /// Source interval in the unchanged logical terminal grid. This position
++    /// is intentionally outside the position-independent glyph cache key.
++    logical_offset: ?u16 = null,
++
++    pub fn logicalCellIndex(self: TextRun, visual_x: u16) u16 {
++        _ = self;
++        return visual_x;
++    }
  };
  
  /// RunIterator is an iterator that yields text runs.
@@ -8913,10 +8962,16 @@ index 9f33ba3..9786789 100644
 +    layout_ready: bool = false,
 +    max: usize = 0,
 +    visual_runs: []const VisualRun = &.{},
++
++    /// Source cell whose attributes accompany this visual paint column.
++    pub fn logicalCellIndex(self: *const RunIterator, visual_x: usize) usize {
++        _ = self;
++        return visual_x;
++    }
  
      pub fn next(self: *RunIterator, alloc: Allocator) !?TextRun {
          const slice = &self.opts.cells;
-@@ -50,257 +72,292 @@ pub const RunIterator = struct {
+@@ -50,257 +87,293 @@ pub const RunIterator = struct {
          const graphemes: []const []const u21 = slice.items(.grapheme);
          const styles: []const terminal.Style = slice.items(.style);
  
@@ -9202,19 +9257,18 @@ index 9f33ba3..9786789 100644
                      cell,
 -                    graphemes[j],
 -                    font_style,
-+                    graphemes[logical_j],
-+                    run_font_style,
-                     presentation,
+-                    presentation,
 -                )) |idx| break :font_info .{ .idx = idx };
-+                );
- 
+-
 -                // Otherwise we need a fallback character. Prefer the
 -                // official replacement character.
 -                if (try self.opts.grid.getIndex(
 -                    alloc,
 -                    0xFFFD, // replacement char
 -                    font_style,
--                    presentation,
++                    graphemes[logical_j],
++                    run_font_style,
+                     presentation,
 -                )) |idx| break :font_info .{ .idx = idx, .fallback = 0xFFFD };
 -
 -                // Fallback to space
@@ -9229,7 +9283,8 @@ index 9f33ba3..9786789 100644
 -                // have a font that can render a space.
 -                unreachable;
 -            };
--
++                );
+ 
 -            //log.warn("char={x} info={}", .{ cell.char, font_info });
 -            if (j == self.i) current_font = font_info.idx;
 +                if (!have_font) {
@@ -9368,6 +9423,7 @@ index 9f33ba3..9786789 100644
 +                .grid = self.opts.grid,
 +                .font_index = current_font,
 +                .rtl = rtl,
++                .logical_offset = @intCast(logical_start),
 +            };
          }
  
@@ -9426,7 +9482,7 @@ index 9f33ba3..9786789 100644
      }
  
      fn addCodepoint(self: *RunIterator, hasher: anytype, cp: u32, cluster: u32) !void {
-@@ -380,8 +437,72 @@ pub const RunIterator = struct {
+@@ -380,8 +453,72 @@ pub const RunIterator = struct {
  
          return null;
      }
@@ -9565,3 +9621,54 @@ index 3e331e0..0ed608e 100644
  /// Initialize ghostty global state.
  pub export fn ghostty_init(argc: usize, argv: [*][*:0]u8) c_int {
      assert(builtin.link_libc);
+diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
+index 2e01d9b..5e29cdf 100644
+--- a/src/renderer/generic.zig
++++ b/src/renderer/generic.zig
+@@ -2958,11 +2958,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+             var shaper_cells: ?[]const font.shape.Cell = null;
+             var shaper_cells_i: usize = 0;
+ 
+-            for (
+-                0..,
+-                cells_raw[0..cells_len],
+-                cells_style[0..cells_len],
+-            ) |x, *cell, *managed_style| {
++            for (0..cells_len) |x| {
++                const source_x = run_iter.logicalCellIndex(x);
++                const cell = &cells_raw[source_x];
++                const managed_style = &cells_style[source_x];
+                 // If this cell falls within our preedit range then we
+                 // skip this because preedits are setup separately.
+                 if (preedit_range) |range| preedit: {
+@@ -3042,9 +3041,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+ 
+                     // Selection should take the highest precedence.
+                     const x_compare = if (wide == .spacer_tail)
+-                        x -| 1
++                        source_x -| 1
+                     else
+-                        x;
++                        source_x;
+                     if (selection) |sel| {
+                         if (x_compare >= sel[0] and
+                             x_compare <= sel[1]) break :selected .selection;
+@@ -3453,7 +3452,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+             color: terminal.color.RGB,
+             alpha: u8,
+         ) !void {
+-            const cell = cell_raws[x];
++            const source_x = shaper_run.logicalCellIndex(x);
++            const cell = cell_raws[source_x];
+             const cp = cell.codepoint();
+ 
+             // Render
+@@ -3475,7 +3475,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+                         } else .none,
+                     .constraint_width = constraintWidth(
+                         cell_raws,
+-                        x,
++                        source_x,
+                         cols,
+                     ),
+                 },

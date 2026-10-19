@@ -38,6 +38,7 @@ def verify(package, flavor, source):
             require(not path.is_absolute() and ".." not in path.parts, "Unsafe archive path")
             require(member.uid == 0 and member.gid == 0, "Unexpected package ownership")
             require(not any(x.startswith(".jbroot-") for x in path.parts), "Randomized jbroot path in archive")
+    process.stdout.read()
     process.stdout.close()
     require(process.wait() == 0, "Cannot inspect package archive")
     result = {"metadata": metadata, "flavor": flavor, "binaries": {}}
