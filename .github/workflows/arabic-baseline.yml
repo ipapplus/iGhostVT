@@ -1,6 +1,9 @@
 name: Arabic RTL baseline (diagnostic only)
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/arabic-rtl-20261019]
+    paths: [.github/workflows/arabic-baseline.yml]
 permissions:
   contents: read
 jobs:
