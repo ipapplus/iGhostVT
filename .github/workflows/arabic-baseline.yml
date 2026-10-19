@@ -1,14 +1,17 @@
 name: Arabic RTL baseline (diagnostic only)
 on:
   workflow_dispatch:
-  push:
-    branches: [codex/arabic-rtl-20261019]
-    paths: [.github/workflows/arabic-baseline.yml]
+    inputs:
+      runner:
+        description: Hosted macOS runner pool
+        type: choice
+        default: macos-26
+        options: [macos-26, macos-15]
 permissions:
   contents: read
 jobs:
   baseline:
-    runs-on: macos-26
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
