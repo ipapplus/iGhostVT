@@ -51,21 +51,26 @@ index 0000000..2a101fe
 +SOFTWARE.
 diff --git a/pkg/itijah/PORT.md b/pkg/itijah/PORT.md
 new file mode 100644
-index 0000000..519ad6b
+index 0000000..28744cd
 --- /dev/null
 +++ b/pkg/itijah/PORT.md
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,24 @@
 +# Embedded itijah provenance
 +
 +Source: DiaaEddin/itijah tag v0.2.1, fetched as
 +https://codeload.github.com/DiaaEddin/itijah/tar.gz/refs/tags/v0.2.1
 +Archive SHA-256: b885878fe9edf5a2b2b2fc270aa74cfa498eeafd1a2fc60cdb4aa275d3047093
 +
-+The upstream manifest declares version 0.2.1 and minimum Zig 0.15.2.
++The original upstream manifest declares version 0.2.1 and minimum Zig 0.15.2.
++The embedded manifest requires Zig 0.16.0 and omits the unused upstream UCD
++and uucode dependency entries. Conformance data is downloaded separately
++with pinned SHA-256 checksums; runtime Unicode tables come from Ghostty.
 +The embedded build adapter omits the optional benchmark graph, which uses
 +pre-0.16 filesystem APIs. Ghostty constructs the module for each target
 +and supplies its existing singleton uucode module and generated tables.
-+The upstream bidirectional implementation is preserved. Arabic glyph
++The upstream bidirectional implementation is preserved. The conformance test
++mode is fixed to the full suite instead of reading environment variables
++through the pre-0.16 process API. Arabic glyph
 +shaping is performed by CoreText or HarfBuzz, not itijah's shaping stubs.
 +
 +The Ghostty port derives from PR #11079 at
@@ -311,26 +316,17 @@ index 0000000..727595e
 +}
 diff --git a/pkg/itijah/build.zig.zon b/pkg/itijah/build.zig.zon
 new file mode 100644
-index 0000000..0e06b89
+index 0000000..807bcc6
 --- /dev/null
 +++ b/pkg/itijah/build.zig.zon
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,16 @@
 +.{
 +    .name = .itijah,
 +    .version = "0.2.1",
-+    .dependencies = .{
-+        .ucd = .{
-+            .url = "https://www.unicode.org/Public/zipped/16.0.0/UCD.zip",
-+            .hash = "N-V-__8AALTJcQJ3hosujokSgxYTsa3q1mDZ2dasYhuJwaOV",
-+            .lazy = true,
-+        },
-+        .uucode = .{
-+            .url = "https://github.com/jacobsandlund/uucode/archive/refs/tags/v0.2.0.tar.gz",
-+            .hash = "uucode-0.2.0-ZZjBPqZVVABQepOqZHR7vV_NcaN-wats0IB6o-Exj6m9",
-+        },
-+    },
++    // Unicode tables are supplied by the embedding Ghostty build.
++    .dependencies = .{},
 +    .fingerprint = 0xae8afccd6159e191,
-+    .minimum_zig_version = "0.15.2",
++    .minimum_zig_version = "0.16.0",
 +    .paths = .{
 +        "build.zig",
 +        "build.zig.zon",
@@ -5219,10 +5215,10 @@ index 0000000..3d7fc7b
 +}
 diff --git a/pkg/itijah/src/test/conformance.zig b/pkg/itijah/src/test/conformance.zig
 new file mode 100644
-index 0000000..3b99871
+index 0000000..03cadfa
 --- /dev/null
 +++ b/pkg/itijah/src/test/conformance.zig
-@@ -0,0 +1,474 @@
+@@ -0,0 +1,452 @@
 +const std = @import("std");
 +const testing = std.testing;
 +
@@ -5279,36 +5275,14 @@ index 0000000..3b99871
 +    .{ .name = "PDI", .class = .pop_directional_isolate },
 +};
 +
++// This embedding runs the full official fixture set, without environment
++// lookups through the pre-0.16 process API.
 +fn selectedMode() Mode {
-+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "ITIJAH_CONFORMANCE_MODE")) |mode_name| {
-+        defer std.heap.page_allocator.free(mode_name);
-+        if (std.ascii.eqlIgnoreCase(mode_name, "full")) {
-+            return .{
-+                .name = "full",
-+                .full = true,
-+                .max_bidi_cases = std.math.maxInt(usize),
-+                .max_char_cases = std.math.maxInt(usize),
-+            };
-+        }
-+    } else |_| {}
-+
-+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "ITIJAH_CONFORMANCE_FULL")) |flag| {
-+        defer std.heap.page_allocator.free(flag);
-+        if (std.mem.eql(u8, flag, "1") or std.ascii.eqlIgnoreCase(flag, "true")) {
-+            return .{
-+                .name = "full",
-+                .full = true,
-+                .max_bidi_cases = std.math.maxInt(usize),
-+                .max_char_cases = std.math.maxInt(usize),
-+            };
-+        }
-+    } else |_| {}
-+
 +    return .{
-+        .name = "filtered",
-+        .full = false,
-+        .max_bidi_cases = 3000,
-+        .max_char_cases = 3000,
++        .name = "full",
++        .full = true,
++        .max_bidi_cases = std.math.maxInt(usize),
++        .max_char_cases = std.math.maxInt(usize),
 +    };
 +}
 +
@@ -6749,10 +6723,26 @@ index 46ab05d..0744ed5 100644
      // We need wuffs for Kitty graphics pixel operations (format
      // conversion and alpha blending). Unlike pure Zig dependencies
 diff --git a/src/build/SharedDeps.zig b/src/build/SharedDeps.zig
-index 7f777fa..be78101 100644
+index 7f777fa..1fd7623 100644
 --- a/src/build/SharedDeps.zig
 +++ b/src/build/SharedDeps.zig
-@@ -190,6 +190,7 @@ pub fn add(
+@@ -57,6 +57,7 @@ uucode_tables: std.Build.LazyPath,
+ /// This conflict is independent of whether vaxis itself is acquired as a
+ /// singleton or per-target dep.
+ uucode_mod: *std.Build.Module,
++bidi_conformance_data: bool,
+ 
+ /// Used to keep track of a list of file sources.
+ pub const LazyPathList = std.ArrayList(std.Build.LazyPath);
+@@ -90,6 +91,7 @@ pub fn init(b: *std.Build, cfg: *const Config) !SharedDeps {
+         .framedata = try .init(b),
+         .uucode_tables = uucode_tables,
+         .uucode_mod = uucode_mod,
++        .bidi_conformance_data = b.option(bool, "bidi-conformance-data", "Use downloaded Unicode bidi conformance fixtures") orelse false,
+ 
+         // Setup by retarget
+         .options = undefined,
+@@ -190,6 +192,7 @@ pub fn add(
  
      // Every exe needs the uucode module
      step.root_module.addImport("uucode", self.uucode_mod);
@@ -6760,7 +6750,7 @@ index 7f777fa..be78101 100644
  
      // C imports for locale constants and functions
      try translate_c.addImportToModule(b, "locale-c", step.root_module, .{
-@@ -935,7 +936,7 @@ pub fn addSimd(
+@@ -935,7 +938,7 @@ pub fn addSimd(
          const HWY_AVX3_DL: c_int = 1 << 7;
          const HWY_AVX3: c_int = 1 << 8;
  
@@ -6769,7 +6759,7 @@ index 7f777fa..be78101 100644
  
          // Zig 0.13 bug: https://github.com/ziglang/zig/issues/20414
          // To workaround this we just disable AVX512 support completely.
-@@ -1183,6 +1184,23 @@ fn gtkNgDistResourcesUncached(b: *std.Build) GtkNgResources {
+@@ -1183,6 +1186,31 @@ fn gtkNgDistResourcesUncached(b: *std.Build) GtkNgResources {
      };
  }
  
@@ -6787,6 +6777,14 @@ index 7f777fa..be78101 100644
 +        .optimize = optimize,
 +    });
 +    bidi.addImport("uucode", self.uucode_mod);
++    if (self.bidi_conformance_data) {
++        bidi.addAnonymousImport("BidiTest", .{
++            .root_source_file = b.path("pkg/itijah/testdata/BidiTest.txt"),
++        });
++        bidi.addAnonymousImport("BidiCharTest", .{
++            .root_source_file = b.path("pkg/itijah/testdata/BidiCharacterTest.txt"),
++        });
++    }
 +    module.addImport("itijah", bidi);
 +}
 +
