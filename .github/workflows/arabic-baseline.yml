@@ -1,0 +1,73 @@
+name: Arabic RTL baseline (diagnostic only)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: owngoal-dev/iGhostVT
+          ref: dd1b3be882e6dea667bc754d5f52caf30095be4b
+          path: app
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: Lakr233/libghostty-spm
+          ref: dfe0cb03415cb2371d71ed46cd4db0614bef84eb
+          path: wrapper
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: ghostty-org/ghostty
+          ref: 1e9e14af5df14211892f5fc15fd21a49c7d94868
+          path: engine
+          persist-credentials: false
+      - name: Select Xcode and packaging tools on the runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest="$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)"
+          sudo xcode-select -s "$latest/Contents/Developer"
+          mkdir -p evidence
+          xcodebuild -version | tee evidence/xcode-version.log
+          swift --version | tee evidence/swift-version.log
+          brew install ldid dpkg xcbeautify
+          xcodebuild -downloadComponent MetalToolchain
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Project checks and isolated host harnesses
+        working-directory: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          make check 2>&1 | tee ../evidence/make-check.log
+          make test 2>&1 | tee ../evidence/make-test.log
+      - name: Rebuild baseline engine (not an RTL deliverable)
+        working-directory: wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          zig version | tee ../evidence/zig-version.log
+          ./build.sh --source "$GITHUB_WORKSPACE/engine" --platforms macos,ios --skip-tests 2>&1 | tee ../evidence/baseline-engine-build.log
+          cp Package.local.swift Package.swift
+          swift test 2>&1 | tee ../evidence/swift-test.log
+          xcodebuild -scheme GhosttyTerminal -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build 2>&1 | tee ../evidence/wrapper-ios-build.log
+      - name: Exercise actual baseline shapers
+        working-directory: engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          zig build test -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dtest-filter=shape 2>&1 | tee ../evidence/baseline-shapers.log
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arabic-rtl-baseline-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
