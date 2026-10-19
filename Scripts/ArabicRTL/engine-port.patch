@@ -10,6 +10,18 @@ index e42311e..ebcb119 100644
          .zig_wayland = .{
              // codeberg ifreund/zig-wayland
              .url = "https://deps.files.ghostty.org/wayland-0.6.0-lQa1kqz8AQADQmdNJsNhLoNHcnEGEUjrOaPV-dtEnEmX.tar.gz",
+diff --git a/include/ghostty.h b/include/ghostty.h
+index eec6550..77f2d8d 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1136,6 +1136,7 @@ typedef enum {
+ //-------------------------------------------------------------------
+ // Published API
+ 
++GHOSTTY_API const char* ghostty_arabic_rtl_build_id(void);
+ GHOSTTY_API int ghostty_init(uintptr_t, char**);
+ GHOSTTY_API void ghostty_cli_try_action(void);
+ GHOSTTY_API ghostty_info_s ghostty_info(void);
 diff --git a/pkg/itijah/LICENSE b/pkg/itijah/LICENSE
 new file mode 100644
 index 0000000..2a101fe
@@ -6821,7 +6833,7 @@ index 0000000..de8cbf8
 +    };
 +}
 diff --git a/src/font/shaper/coretext.zig b/src/font/shaper/coretext.zig
-index 6960c32..4896d72 100644
+index 6960c32..6f2b4ee 100644
 --- a/src/font/shaper/coretext.zig
 +++ b/src/font/shaper/coretext.zig
 @@ -3,6 +3,8 @@ const builtin = @import("builtin");
@@ -7802,7 +7814,7 @@ index 6960c32..4896d72 100644
          .monaspace_neon => font.embedded.monaspace_neon,
          .nerd_font => font.embedded.test_nerd_font,
      };
-@@ -2677,3 +3349,43 @@ fn testShaperWithDiscoveredFont(alloc: Allocator, font_req: [:0]const u8) !TestS
+@@ -2677,3 +3349,207 @@ fn testShaperWithDiscoveredFont(alloc: Allocator, font_req: [:0]const u8) !TestS
          .lib = lib,
      };
  }
@@ -7845,6 +7857,170 @@ index 6960c32..4896d72 100644
 +        try testing.expectEqual(@as(u16, @intCast(x)), cell.x);
 +    }
 +    try testing.expectEqual(null, try it.next(alloc));
++}
++
++const ArabicOracleGlyph = struct {
++    glyph: u32,
++    x: f64,
++    y: f64,
++
++    fn lessThan(_: void, a: ArabicOracleGlyph, b: ArabicOracleGlyph) bool {
++        if (a.x != b.x) return a.x < b.x;
++        if (a.y != b.y) return a.y < b.y;
++        return a.glyph < b.glyph;
++    }
++};
++
++// CoreText resolves and shapes the entire natural-direction line here. This
++// oracle does not use Ghostty's bidi runs, forced embedding, or cell mapping.
++fn arabicNaturalCoreTextOracle(
++    alloc: Allocator,
++    shaper: *Shaper,
++    grid: *SharedGrid,
++    text: []const u8,
++) ![]ArabicOracleGlyph {
++    const utf16 = try std.unicode.utf8ToUtf16LeAlloc(alloc, text);
++    defer alloc.free(utf16);
++    const str = try macos.foundation.String.createWithCharactersNoCopy(utf16);
++    defer str.release();
++    const index = (try grid.getIndex(alloc, 0x0645, .regular, null)).?;
++    const attrs = try shaper.getFont(grid, index);
++    const attributed = try macos.foundation.AttributedString.create(str, attrs);
++    defer attributed.release();
++    const options = try macos.foundation.Dictionary.create(&.{}, &.{});
++    defer options.release();
++    const setter = try macos.text.Typesetter.createWithAttributedStringAndOptions(attributed, options);
++    defer setter.release();
++    const line = try setter.createLine(.{ .location = 0, .length = 0 });
++    defer line.release();
++    var result: std.ArrayList(ArabicOracleGlyph) = .empty;
++    errdefer result.deinit(alloc);
++    var arena = std.heap.ArenaAllocator.init(alloc);
++    defer arena.deinit();
++    const runs = line.getGlyphRuns();
++    for (0..runs.getCount()) |i| {
++        const run = runs.getValueAtIndex(macos.text.Run, i);
++        const glyphs = run.getGlyphsPtr() orelse try run.getGlyphs(arena.allocator());
++        const positions = run.getPositionsPtr() orelse try run.getPositions(arena.allocator());
++        for (glyphs, positions) |glyph, position| {
++            try result.append(alloc, .{ .glyph = glyph, .x = position.x, .y = position.y });
++        }
++    }
++    std.mem.sort(ArabicOracleGlyph, result.items, {}, ArabicOracleGlyph.lessThan);
++    return result.toOwnedSlice(alloc);
++}
++
++test "shape Arabic requested corpus matches natural CoreText with ANSI and updates" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    const phrases = [_][]const u8{
++        "مرحبا بالعالم",
++        "السلام عليكم",
++        "مرحبا Codex كيف حالك",
++        "الإصدار 163 يعمل بشكل جيد",
++        "السَّلَامُ عَلَيْكُمْ",
++        "Codex: تم تنفيذ المهمة بنجاح",
++        "مرحبا، كيف حالك؟",
++        "اختبار (Codex) ناجح",
++        "[Codex] مرحبا!",
++        "!مرحبا Codex?",
++        "printf: مرحبا path_163.txt",
++        "English 163 (Codex) stays left to right.",
++    };
++    var testdata = try testShaperWithFont(alloc, .arabic);
++    defer testdata.deinit();
++    for (phrases) |phrase| {
++        const expected = try arabicNaturalCoreTextOracle(alloc, &testdata.shaper, testdata.grid, phrase);
++        defer alloc.free(expected);
++        var t = try terminal.Terminal.init(testing.io, alloc, .{ .cols = 120, .rows = 3 });
++        defer t.deinit(alloc);
++        t.modes.set(.grapheme_cluster, true);
++        var stream = t.vtStream();
++        defer stream.deinit();
++        var state: terminal.RenderState = .empty;
++        defer state.deinit(alloc);
++        for ([_][]const u8{ "\x1b[31m", "\x1b[32m", "\x1b[0m" }) |color| {
++            stream.nextSlice("\r\x1b[2K");
++            stream.nextSlice(color);
++            stream.nextSlice(phrase);
++            stream.nextSlice("\x1b[0m");
++            try state.update(alloc, &t);
++            const row = state.row_data.get(0).cells.slice();
++            var logical: std.ArrayList(u21) = .empty;
++            defer logical.deinit(alloc);
++            for (row.items(.raw), row.items(.grapheme)) |cell, marks| {
++                if (cell.codepoint() == 0) break;
++                try logical.append(alloc, @intCast(cell.codepoint()));
++                try logical.appendSlice(alloc, marks);
++            }
++            var decoded: std.ArrayList(u21) = .empty;
++            defer decoded.deinit(alloc);
++            var utf8 = (try std.unicode.Utf8View.init(phrase)).iterator();
++            while (utf8.nextCodepoint()) |cp| try decoded.append(alloc, cp);
++            try testing.expectEqualSlices(u21, decoded.items, logical.items);
++
++            var actual: std.ArrayList(ArabicOracleGlyph) = .empty;
++            defer actual.deinit(alloc);
++            var it = testdata.shaper.runIterator(.{ .grid = testdata.grid, .cells = row });
++            while (try it.next(alloc)) |run| {
++                const cells = try testdata.shaper.shape(run);
++                for (cells) |cell| {
++                    try testing.expect(cell.x < run.cells);
++                    try testing.expect(@as(u32, run.offset) + cell.x < 120);
++                    const column: f64 = @floatFromInt(@as(u32, run.offset) + cell.x);
++                    const width: f64 = @floatFromInt(run.grid.metrics.cell_width);
++                    try actual.append(alloc, .{
++                        .glyph = cell.glyph_index,
++                        .x = column * width + @as(f64, @floatFromInt(cell.x_offset)),
++                        .y = @floatFromInt(cell.y_offset),
++                    });
++                }
++            }
++            std.mem.sort(ArabicOracleGlyph, actual.items, {}, ArabicOracleGlyph.lessThan);
++            try testing.expectEqual(expected.len, actual.items.len);
++            for (expected, actual.items) |want, got| try testing.expectEqual(want.glyph, got.glyph);
++        }
++    }
++}
++
++
++test "shape Arabic wrapping and scrolling preserve logical grid and cell bounds" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    var testdata = try testShaperWithFont(alloc, .arabic);
++    defer testdata.deinit();
++    var t = try terminal.Terminal.init(testing.io, alloc, .{ .cols = 16, .rows = 4 });
++    defer t.deinit(alloc);
++    t.modes.set(.grapheme_cluster, true);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    var state: terminal.RenderState = .empty;
++    defer state.deinit(alloc);
++    for (0..12) |_| {
++        stream.nextSlice("\x1b[32mالإصدار 163 يعمل بشكل جيد\x1b[0m\r\n");
++        const before = try t.screens.active.dumpStringAlloc(alloc, .{ .active = .{} });
++        defer alloc.free(before);
++        try state.update(alloc, &t);
++        var glyph_count: usize = 0;
++        for (0..state.row_data.len) |row_i| {
++            var it = testdata.shaper.runIterator(.{
++                .grid = testdata.grid,
++                .cells = state.row_data.get(row_i).cells.slice(),
++            });
++            while (try it.next(alloc)) |run| {
++                const cells = try testdata.shaper.shape(run);
++                glyph_count += cells.len;
++                for (cells) |cell| {
++                    try testing.expect(cell.x < run.cells);
++                    try testing.expect(@as(u32, run.offset) + cell.x < 16);
++                }
++            }
++        }
++        try testing.expect(glyph_count > 0);
++        const after = try t.screens.active.dumpStringAlloc(alloc, .{ .active = .{} });
++        defer alloc.free(after);
++        try testing.expectEqualStrings(before, after);
++    }
 +}
 diff --git a/src/font/shaper/harfbuzz.zig b/src/font/shaper/harfbuzz.zig
 index 11f9fd2..cefccd4 100644
@@ -9372,3 +9548,19 @@ index d16bd96..81aba7b 100644
          defer term.deinit(alloc);
  
          // Iterate over unicode codepoints and add to terminal
+diff --git a/src/main_c.zig b/src/main_c.zig
+index 3e331e0..0ed608e 100644
+--- a/src/main_c.zig
++++ b/src/main_c.zig
+@@ -106,6 +106,11 @@ pub const String = extern struct {
+     }
+ };
+ 
++/// Identifies the custom RTL engine in static archives and the final app.
++pub export fn ghostty_arabic_rtl_build_id() [*:0]const u8 {
++    return "iGhostVT-ArabicRTL-coretext-itijah-0.2.1-20261019";
++}
++
+ /// Initialize ghostty global state.
+ pub export fn ghostty_init(argc: usize, argv: [*][*:0]u8) c_int {
+     assert(builtin.link_libc);
