@@ -6834,7 +6834,7 @@ index 0000000..de8cbf8
 +    };
 +}
 diff --git a/src/font/shaper/coretext.zig b/src/font/shaper/coretext.zig
-index 6960c32..adfdc09 100644
+index 6960c32..52151ac 100644
 --- a/src/font/shaper/coretext.zig
 +++ b/src/font/shaper/coretext.zig
 @@ -3,6 +3,8 @@ const builtin = @import("builtin");
@@ -7016,7 +7016,33 @@ index 6960c32..adfdc09 100644
  
          // For debugging positions, turn this on:
          //var run_offset_y: f64 = 0.0;
-@@ -434,9 +460,14 @@ pub const Shaper = struct {
+@@ -413,6 +439,25 @@ pub const Shaper = struct {
+         // other so we can iterate over them and just append to our
+         // cell buffer.
+         const runs = line.getGlyphRuns();
++        if (run.rtl) {
++            // CoreText may emit a mark before its base. Establish base
++            // positions first so such marks retain their real GPOS offsets.
++            for (0..runs.getCount()) |run_i| {
++                const base_run = runs.getValueAtIndex(macos.text.Run, run_i);
++                const advances = base_run.getAdvancesPtr() orelse try base_run.getAdvances(alloc);
++                const positions = base_run.getPositionsPtr() orelse try base_run.getPositions(alloc);
++                const indices = base_run.getStringIndicesPtr() orelse try base_run.getStringIndices(alloc);
++                for (advances, positions, indices) |advance, position, index| {
++                    if (advance.width == 0) continue;
++                    const cluster: usize = @intCast(state.codepoints.items[index].cluster);
++                    if (cluster < self.cluster_anchor_x.items.len and
++                        std.math.isNan(self.cluster_anchor_x.items[cluster]))
++                    {
++                        self.cluster_anchor_x.items[cluster] = position.x;
++                    }
++                }
++            }
++        }
+         for (0..runs.getCount()) |run_i| {
+             const ctrun = runs.getValueAtIndex(macos.text.Run, run_i);
+ 
+@@ -434,9 +479,15 @@ pub const Shaper = struct {
                  positions,
                  indices,
              ) |glyph, advance, position, index| {
@@ -7029,11 +7055,12 @@ index 6960c32..adfdc09 100644
                  const cluster = state.codepoints.items[index].cluster;
 +                const source_codepoint = state.codepoints.items[index].codepoint;
 +                const is_combining_mark = source_codepoint != 0 and
-+                    unicode.table.get(@intCast(source_codepoint)).width_zero_in_grapheme;
++                    (unicode.table.get(@intCast(source_codepoint)).width_zero_in_grapheme or
++                    (run.rtl and advance.width == 0));
                  if (cell_offset.cluster != cluster) {
                      // We previously asserted that the new cluster is greater
                      // than cell_offset.cluster, but this isn't always true.
-@@ -486,16 +517,92 @@ pub const Shaper = struct {
+@@ -486,16 +537,92 @@ pub const Shaper = struct {
                      // exceptions to this heuristic for detecting ligatures,
                      // but using the logging below seems to show it works
                      // well.)
@@ -7044,10 +7071,7 @@ index 6960c32..adfdc09 100644
 -                            .cluster = cluster,
 -                            .x = run_offset.x,
 -                        };
--
--                        // For debugging positions, turn this on:
--                        //cell_offset_y = run_offset_y;
-+                    if (is_first_codepoint_in_cluster) {
++                    if (is_first_codepoint_in_cluster and (!run.rtl or !is_combining_mark)) {
 +                        const should_reset = (run.rtl and !is_combining_mark) or
 +                            !is_after_glyph_from_current_or_next_clusters;
 +                        if (should_reset) {
@@ -7122,7 +7146,9 @@ index 6960c32..adfdc09 100644
 +                            break :blk codepoint.cluster != cluster;
 +                        } else break :blk true;
 +                    };
-+
+ 
+-                        // For debugging positions, turn this on:
+-                        //cell_offset_y = run_offset_y;
 +                    // In RTL runs, a combining mark can establish a cluster
 +                    // anchor before the base glyph arrives. Re-anchor to the
 +                    // base glyph position once the first logical codepoint in
@@ -7136,7 +7162,7 @@ index 6960c32..adfdc09 100644
                      }
                  }
  
-@@ -521,12 +628,10 @@ pub const Shaper = struct {
+@@ -521,12 +648,10 @@ pub const Shaper = struct {
              }
          }
  
@@ -7153,7 +7179,7 @@ index 6960c32..adfdc09 100644
              @branchHint(.cold);
              std.mem.sort(
                  font.shape.Cell,
-@@ -685,6 +790,10 @@ pub const Shaper = struct {
+@@ -685,6 +810,10 @@ pub const Shaper = struct {
          pub fn finalize(self: RunIteratorHook) void {
              _ = self;
          }
@@ -7164,7 +7190,7 @@ index 6960c32..adfdc09 100644
      };
  
      fn debugPositions(
-@@ -1823,13 +1932,8 @@ test "shape Chakma vowel sign with ligature (vowel sign renders first)" {
+@@ -1823,13 +1952,8 @@ test "shape Chakma vowel sign with ligature (vowel sign renders first)" {
          const cells = try shaper.shape(run);
          try testing.expectEqual(@as(usize, 4), cells.len);
          try testing.expectEqual(@as(u16, 0), cells[0].x);
@@ -7180,7 +7206,7 @@ index 6960c32..adfdc09 100644
  
          // The vowel sign U renders before the TAA:
          try testing.expect(cells[1].x_offset < cells[2].x_offset);
-@@ -1893,18 +1997,18 @@ test "shape Bengali ligatures with out of order vowels" {
+@@ -1893,18 +2017,18 @@ test "shape Bengali ligatures with out of order vowels" {
  
          const cells = try shaper.shape(run);
          try testing.expectEqual(@as(usize, 8), cells.len);
@@ -7211,7 +7237,7 @@ index 6960c32..adfdc09 100644
  
          // The vowel sign E renders before the SSA:
          try testing.expect(cells[2].x_offset < cells[3].x_offset);
-@@ -1912,6 +2016,126 @@ test "shape Bengali ligatures with out of order vowels" {
+@@ -1912,6 +2036,126 @@ test "shape Bengali ligatures with out of order vowels" {
      try testing.expectEqual(@as(usize, 1), count);
  }
  
@@ -7338,7 +7364,7 @@ index 6960c32..adfdc09 100644
  test "shape box glyphs" {
      const testing = std.testing;
      const alloc = testing.allocator;
-@@ -2516,6 +2740,450 @@ test "shape high plane sprite font codepoint" {
+@@ -2516,6 +2760,450 @@ test "shape high plane sprite font codepoint" {
      try testing.expectEqual(null, try it.next(alloc));
  }
  
@@ -7789,7 +7815,7 @@ index 6960c32..adfdc09 100644
  const TestShaper = struct {
      alloc: Allocator,
      shaper: Shaper,
-@@ -2531,10 +3199,12 @@ const TestShaper = struct {
+@@ -2531,10 +3219,12 @@ const TestShaper = struct {
  };
  
  const TestFont = enum {
@@ -7802,7 +7828,7 @@ index 6960c32..adfdc09 100644
      monaspace_neon,
      nerd_font,
  };
-@@ -2548,10 +3218,12 @@ fn testShaperWithFont(alloc: Allocator, font_req: TestFont) !TestShaper {
+@@ -2548,10 +3238,12 @@ fn testShaperWithFont(alloc: Allocator, font_req: TestFont) !TestShaper {
      const testEmoji = font.embedded.emoji;
      const testEmojiText = font.embedded.emoji_text;
      const testFont = switch (font_req) {
@@ -7815,7 +7841,7 @@ index 6960c32..adfdc09 100644
          .monaspace_neon => font.embedded.monaspace_neon,
          .nerd_font => font.embedded.test_nerd_font,
      };
-@@ -2677,3 +3349,286 @@ fn testShaperWithDiscoveredFont(alloc: Allocator, font_req: [:0]const u8) !TestS
+@@ -2677,3 +3369,298 @@ fn testShaperWithDiscoveredFont(alloc: Allocator, font_req: [:0]const u8) !TestS
          .lib = lib,
      };
  }
@@ -7870,6 +7896,7 @@ index 6960c32..adfdc09 100644
 +    glyph: u32,
 +    x: f64,
 +    y: f64,
++    is_mark: bool = false,
 +
 +    fn lessThan(_: void, a: ArabicOracleGlyph, b: ArabicOracleGlyph) bool {
 +        if (a.x != b.x) return a.x < b.x;
@@ -7909,8 +7936,9 @@ index 6960c32..adfdc09 100644
 +        const run = runs.getValueAtIndex(macos.text.Run, i);
 +        const glyphs = run.getGlyphsPtr() orelse try run.getGlyphs(arena.allocator());
 +        const positions = run.getPositionsPtr() orelse try run.getPositions(arena.allocator());
-+        for (glyphs, positions) |glyph, position| {
-+            try result.append(alloc, .{ .glyph = glyph, .x = position.x, .y = position.y });
++        const advances = run.getAdvancesPtr() orelse try run.getAdvances(arena.allocator());
++        for (glyphs, positions, advances) |glyph, position, advance| {
++            try result.append(alloc, .{ .glyph = glyph, .x = position.x, .y = position.y, .is_mark = advance.width == 0 });
 +        }
 +    }
 +    std.mem.sort(ArabicOracleGlyph, result.items, {}, ArabicOracleGlyph.lessThan);
@@ -7986,11 +8014,21 @@ index 6960c32..adfdc09 100644
 +            }
 +            std.mem.sort(ArabicOracleGlyph, actual.items, {}, ArabicOracleGlyph.lessThan);
 +            try testing.expectEqual(expected.len, actual.items.len);
-+            for (expected, actual.items, 0..) |want, got, index| {
-+                if (want.glyph != got.glyph) {
-+                    std.debug.print("[DEBUG-rtl-oracle] mismatch={d} cell_width={d} expected={any} actual={any}\n", .{ index, testdata.grid.metrics.cell_width, expected, actual.items });
-+                }
++            var expected_base: ?ArabicOracleGlyph = null;
++            var actual_base: ?ArabicOracleGlyph = null;
++            for (expected, actual.items) |want, got| {
 +                try testing.expectEqual(want.glyph, got.glyph);
++                if (want.is_mark) {
++                    const parent_expected = expected_base orelse return error.MissingReferenceBase;
++                    const parent_actual = actual_base orelse return error.MissingShapedBase;
++                    // The renderer stores integer pixel offsets; compare mark
++                    // placement relative to its base, allowing rounding only.
++                    try testing.expectApproxEqAbs(want.x - parent_expected.x, got.x - parent_actual.x, 0.51);
++                    try testing.expectApproxEqAbs(want.y - parent_expected.y, got.y - parent_actual.y, 0.51);
++                } else {
++                    expected_base = want;
++                    actual_base = got;
++                }
 +            }
 +        }
 +    }
