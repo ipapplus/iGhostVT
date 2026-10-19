@@ -11,7 +11,7 @@ on:
         description: Diagnostic scope
         type: choice
         default: baseline
-        options: [baseline, arabic-regression]
+        options: [baseline, arabic-regression, rtl-shapers]
 permissions:
   contents: read
 jobs:
@@ -38,7 +38,7 @@ jobs:
           path: engine
           persist-credentials: false
       - uses: actions/checkout@v5
-        if: inputs.mode == 'arabic-regression'
+        if: inputs.mode != 'baseline'
         with:
           ref: ${{ github.sha }}
           path: integration
@@ -95,6 +95,20 @@ jobs:
           git -C "$GITHUB_WORKSPACE/engine" apply "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/coretext-regression.patch"
           cd "$GITHUB_WORKSPACE/engine"
           zig build test -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false '-Dtest-filter=shape Arabic phrase contextual glyphs in visual cell order' 2>&1 | tee ../evidence/arabic-coretext-regression.log
+      - name: Test the pinned Arabic RTL port with wrapper patches
+        if: inputs.mode == 'rtl-shapers'
+        working-directory: wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          zig version | tee ../evidence/zig-version.log
+          git -C "$GITHUB_WORKSPACE/engine" apply --check "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/engine-port.patch"
+          git -C "$GITHUB_WORKSPACE/engine" apply "$GITHUB_WORKSPACE/integration/Scripts/ArabicRTL/engine-port.patch"
+          ./Script/apply-patches.sh "$GITHUB_WORKSPACE/engine" 2>&1 | tee ../evidence/wrapper-patches.log
+          cd "$GITHUB_WORKSPACE/engine"
+          zig fmt src/font/shaper src/build/GhosttyZig.zig src/build/SharedDeps.zig src/build/uucode_config.zig pkg/itijah
+          git diff --binary HEAD > ../evidence/engine-effective.patch
+          zig build test -Dapp-runtime=none -Demit-macos-app=false -Dcustom-shaders=false -Dinspector=false -Di18n=false -Dsentry=false -Dtest-filter=shape 2>&1 | tee ../evidence/rtl-coretext-shapers.log
       - name: Preserve diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4
